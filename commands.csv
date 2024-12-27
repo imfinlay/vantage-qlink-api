@@ -1,0 +1,40 @@
+V?S,Allows Dimmer Station loads to have their Max Adjust and Max Error properties changed.,<master number> <C+6bit address of station> <97> <Max Adjust (in HEX)> <Max Error>
+V?V ,Return the Vacation Function Load History on specific Master Controller,<master>
+V?D,Return the Vacation Function Load History on specific Master Controller for a specific day,<master> <specific day> <limit report for specific day>
+VCL,Set the return delimiter characters to [CR] or [CR/LF] and the return format to regular or detailed. Use for setting up RS-232 communication with other system,<flag>
+VEC,Echo the number sent to the system. Used for communication testing.,<number>
+VET,Executes a time function,<master> <function#> <state>
+VGA,"Return the current level of a load specified by the mast, module, and load, address. Querying Q System for load data.",<master> <module> <load>
+VGB,"Return the current level of a load specified by the master, enclosure, module, and load, address. Same as VGA using a newer format.",<master> <enclosure> <module> <load>
+VGC,"Return the current level of the station load specified by the address. Used for LVRS, Wall box dimmer or 0-12v loads residing on the station bus.",<master> <station> <load>
+VGD,Return the current level of each of the loads specified by the module address. Used to receive load values for an entire module simultaneously.,<master> <enclosure> <module>
+VGH,Return station information from a thermostat connected to a QLink external thermostat station.,<master> <station> {<type> {<type> {<type>}}}
+VGL,Return the current level of a load specified by the contractor number.,<contractor #>
+VGN,"Return the name of stations, loads, and masters.",<master> <address> <pos>
+VGS,Return the current state of a switch function.,<master> <station> <switch>
+VGT,Return the current state of each of the switch functions on the specified station. Same as VGS for all 10 station switches simultaneously.,<master> <station>
+VGV,Return the version of the master controller and the date and time.,<master>
+VIC,Outputs an IR code to an Infrared Emitter.,<master> <cflag> <code> <state> <IR emitter>
+VIR,Outputs an IR code to an Infrared Emitter. Same as VIC using a different format.,<master> <code> <state> <IR emitter>
+VLA,Set the load specified by address to a certain level.,<master> <module> <load> <level> {<fade>}
+VLB,Set the load specified by address to a certain level. Same as VLA using a newer format.,<master> <enclosure> <module> <load> <level> {<fade>}
+VLC,"Set the station load specified by address to a certain level. Used for low voltage relay station, wall box dimmer or 0-12 volt loads residing on the station bus.",<master> <station> <load> <level> {<fade>}
+VLD,Set the state of a switch LED.,<master> <station> <led> <state>
+VLO,Set the load specified by contractor number to a certain level.,<con_num> <level> {<fade>}
+VLP,Change Module Load profile,<master> <enclosure> <module> <load> <profile>
+VLS,Return the current state of a switch LED.,<master> <station> <led>
+VLT,Return the current state of each of the switch LEDs for the specified station.,<master> <station> <format>
+VOD,Setup the system to output RS-232 strings when a station LED changes.,<master> <format> <enable>
+VOL,Set up the system to output RS-232 strings when loads change.,<master> <format> <enable>
+VOS,Set up the system to output RS-232 strings when a station switch or infrared button is pressed or released.,<master> <format> <enable>
+VPG,Program the system using QLink .qlk file format strings.,<string>
+VQA,Returns the address and port number of the master controller that has the current RS-232 port.,
+VQM,Query the system for master controllers.,
+VQP,Query a master controller for modules.,<master>
+VQS,Query a master controller for stations.,<master>
+VQT,Get Time function execution parameters,<master> <function#>
+VSC,Configure a station,<master> <station> <serialno>
+VSH,Set parameters on a thermostat connected to a QLink external thermostat station.,<master> <station> <type> <temp> (<type> <temp> {type <temp>}}
+VSP,Change Station Load profile,<master> <station> <load> <profile>
+VST,Set Time function execution parameters,<master> <function#> <state> {<hour> <min> {<sun> <mon> <tue> <wed> <thu> <fri> <sat> {<day> <month> <year> } } }
+VSW,Execute the specified switch function,<master> <station> <switch> <state>

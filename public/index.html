@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TCP Command Console</title>
+    <script>
+        async function fetchServers() {
+            const response = await fetch('/servers');
+            return response.json();
+        }
+
+        async function fetchCommands() {
+            const response = await fetch('/commands');
+            return response.json();
+        }
+
+        async function fetchLogs() {
+            const response = await fetch('/logs');
+            return response.json();
+        }
+
+        async function connectToServer(serverIndex) {
+            const response = await fetch('/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ serverIndex }),
+            });
+            return response.json();
+        }
+
+        async function sendCommand(message) {
+            const response = await fetch('/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message }),
+            });
+            return response.json();
+        }
+
+        async function disconnect() {
+            const response = await fetch('/disconnect', {
+                method: 'POST',
+            });
+            return response.json();
+        }
+
+        async function updateLogs() {
+            const logs = await fetchLogs();
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML = '';
+            logs.forEach(log => {
+                const logEntry = document.createElement('div');
+                logEntry.innerHTML = `<strong>${log.timestamp}</strong>: Command: ${log.message}, Response: ${log.response}`;
+                logContainer.appendChild(logEntry);
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const servers = await fetchServers();
+            const serverDropdown = document.getElementById('server-select');
+            servers.forEach((server, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = `${server.name} (${server.host}:${server.port})`;
+                serverDropdown.appendChild(option);
+            });
+
+            const commands = await fetchCommands();
+            const commandDropdown = document.getElementById('command-select');
+            commands.forEach(({ command, description }) => {
+                const option = document.createElement('option');
+                option.value = command;
+                option.textContent = `${command}: ${description}`;
+                commandDropdown.appendChild(option);
+            });
+
+            document.getElementById('connect-btn').addEventListener('click', async () => {
+                const serverIndex = serverDropdown.value;
+                const result = await connectToServer(serverIndex);
+                alert(result.message);
+                await updateLogs();
+            });
+
+            document.getElementById('send-btn').addEventListener('click', async () => {
+                const command = commandDropdown.value;
+                const params = document.getElementById('params').value;
+                const message = `${command} ${params}`.trim();
+                const result = await sendCommand(message);
+                const output = document.getElementById('output');
+                output.textContent = `Message: ${message}\nResponse: ${result.response || result.message}`;
+                await updateLogs();
+            });
+
+            document.getElementById('disconnect-btn').addEventListener('click', async () => {
+                const result = await disconnect();
+                alert(result.message);
+                await updateLogs();
+            });
+
+            await updateLogs();
+        });
+    </script>
+</head>
+<body>
+    <h1>TCP Command Console</h1>
+    <div>
+        <label for="server-select">Select Server:</label>
+        <select id="server-select"></select>
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn">Disconnect</button>
+    </div>
+    <div>
+        <label for="command-select">Select Command:</label>
+        <select id="command-select"></select>
+        <input id="params" type="text" placeholder="Enter parameters">
+        <button id="send-btn">Send</button>
+    </div>
+    <div>
+        <h3>Output:</h3>
+        <pre id="output"></pre>
+    </div>
+    <div>
+        <h3>Log:</h3>
+        <div id="log-container" style="border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto;"></div>
+    </div>
+</body>
+</html>
+
