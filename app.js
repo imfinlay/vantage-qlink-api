@@ -160,6 +160,6 @@ app.post('/send', (req, res) => {
 });
 
 app.listen(3000, () => {
-    console.log('HTTP to TCP API is running on port 3000.');
+    console.log('vantage-qlink-api is running on port 3000.');
 });
 
