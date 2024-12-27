@@ -4,7 +4,7 @@ A node.js API for the Vantage Qlink API, to test and control a Vantage Qlink hom
 This has two functions for now:
 1. Provide a web UI to test the Vantage API
 2. Provide an API to convert HTTP calls to TCP and ensure error responses are HTTP standard instead of Qlink's own
-3. Log requests (V commands) and responses
+3. Log requests (V commands) and responses to /var/log
 
 The intent is to provide an API interface for home automation systems such as Openhab which don't have a native TCP integration
 
