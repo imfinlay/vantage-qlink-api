@@ -5,6 +5,8 @@ const fs = require('fs');
 const app = express();
 const path = require('path');
 
+const LOG_FILE_PATH = '/var/log/vantage-qlink-api.log';
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.json());
 
@@ -77,7 +79,9 @@ function validateCommand(input) {
 
 function logCommand(message, response) {
     const timestamp = new Date().toLocaleString();
+    const logEntry = `${timestamp} - Command: ${message}, Response: ${response}\n`;
     commandLog.unshift({ timestamp, message, response });
+    fs.appendFileSync(LOG_FILE_PATH, logEntry, 'utf8');
 }
 
 app.get('/servers', (req, res) => {
@@ -160,6 +164,6 @@ app.post('/send', (req, res) => {
 });
 
 app.listen(3000, () => {
-    console.log('vantage-qlink-api is running on port 3000.');
+    console.log('HTTP to TCP API is running on port 3000.');
 });
 
