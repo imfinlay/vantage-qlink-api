@@ -4,8 +4,9 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const app = express();
 const path = require('path');
+const config = require('./config');
 
-const LOG_FILE_PATH = '/var/log/vantage-qlink-api.log';
+const LOG_FILE_PATH = config.LOG_FILE_PATH;
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.json());
@@ -42,10 +43,7 @@ function parseParams(paramString) {
 
 loadValidCommandsFromCSV('./commands.csv');
 
-const servers = [
-    { name: "Server 1", host: "127.0.0.1", port: 4000 },
-    { name: "Vantage", host: "10.101.111.70", port: 3040 },
-];
+const servers = config.servers;
 
 let tcpClient = null;
 let responseCallbacks = [];
