@@ -84,8 +84,9 @@
 
             document.getElementById('send-btn').addEventListener('click', async () => {
                 const command = commandDropdown.value;
+                const modifier = document.querySelector('input[name="modifier"]:checked').value;
                 const params = document.getElementById('params').value;
-                const message = `${command} ${params}`.trim();
+                const message = `${command}${modifier} ${params}`.trim();
                 const result = await sendCommand(message);
                 const output = document.getElementById('output');
                 output.textContent = `Message: ${message}\nResponse: ${result.response || result.message}`;
@@ -114,6 +115,12 @@
         <label for="command-select">Select Command:</label>
         <select id="command-select"></select>
         <input id="params" type="text" placeholder="Enter parameters">
+        <div>
+            <label><input type="radio" name="modifier" value="" checked>No Modifier</label>
+            <label><input type="radio" name="modifier" value="!">! (no response)</label>
+            <label><input type="radio" name="modifier" value="@">@ (regular response)</label>
+            <label><input type="radio" name="modifier" value="#"># (detailed response)</label>
+        </div>
         <button id="send-btn">Send</button>
     </div>
     <div>
@@ -126,4 +133,3 @@
     </div>
 </body>
 </html>
-

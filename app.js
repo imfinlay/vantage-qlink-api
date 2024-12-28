@@ -49,7 +49,18 @@ let tcpClient = null;
 let responseCallbacks = [];
 
 function validateCommand(input) {
-    const [command, ...params] = input.split(' ');
+    const regex = /^([A-Z]{3})([!@#])?(.*)?$/; // Regex to match the command and optional modifier
+    const match = input.match(regex);
+
+    if (!match) {
+        return { valid: false, statusCode: 400, message: `Invalid command format.` };
+    }
+
+    const command = match[1];
+    const modifier = match[2] || ''; // Default to no modifier if no modifier provided
+    const paramString = match[3]?.trim() || '';
+    const params = paramString.split(' ').filter(Boolean);
+
     const rule = VALID_COMMANDS[command];
 
     if (!rule) {
@@ -72,7 +83,7 @@ function validateCommand(input) {
         return { valid: false, statusCode: 422, message: `Parameters for ${command} must be strings.` };
     }
 
-    return { valid: true };
+    return { valid: true, command, modifier, params };
 }
 
 function logCommand(message, response) {
@@ -82,10 +93,12 @@ function logCommand(message, response) {
     fs.appendFileSync(LOG_FILE_PATH, logEntry, 'utf8');
 }
 
+// Endpoint to retrieve the list of available servers
 app.get('/servers', (req, res) => {
     res.json(servers);
 });
 
+// Endpoint to retrieve a list of valid commands and their descriptions
 app.get('/commands', (req, res) => {
     const commands = Object.keys(VALID_COMMANDS).map((cmd) => ({
         command: cmd,
@@ -94,10 +107,16 @@ app.get('/commands', (req, res) => {
     res.json(commands);
 });
 
+// Endpoint to retrieve logs of executed commands and responses
 app.get('/logs', (req, res) => {
-    res.json(commandLog);
+    const formattedLogs = commandLog.map(log => ({
+        ...log,
+        response: `${log.response}`
+    }));
+    res.json(formattedLogs);
 });
 
+// Endpoint to connect to a specified TCP server
 app.post('/connect', (req, res) => {
     const { serverIndex } = req.body;
 
@@ -130,6 +149,7 @@ app.post('/connect', (req, res) => {
     });
 });
 
+// Endpoint to disconnect from the TCP server
 app.post('/disconnect', (req, res) => {
     if (tcpClient) {
         tcpClient.destroy();
@@ -140,6 +160,7 @@ app.post('/disconnect', (req, res) => {
     }
 });
 
+// Endpoint to send a command to the TCP server
 app.post('/send', (req, res) => {
     const { message } = req.body;
 
@@ -152,16 +173,24 @@ app.post('/send', (req, res) => {
         return res.status(validation.statusCode).json({ message: validation.message });
     }
 
-    const messageWithCR = `${message.toUpperCase()}\r`;
-    tcpClient.write(messageWithCR);
+    const { command, modifier, params } = validation;
+    const formattedMessage = `${command}${modifier} ${params.join(' ')}\r`;
+    tcpClient.write(formattedMessage);
 
     responseCallbacks.push((response) => {
         logCommand(message, response);
-        res.json({ message: `Message: ${message}`, response: `Response: ${response}` });
+
+        // Parse space-delimited response
+        const parsedResponse = response.trim().split(/\s+/);
+
+        res.json({
+            message: `Message: ${message}`,
+            response: parsedResponse, // Return parsed response as an array
+        });
     });
 });
 
+// Start the server and listen on port 3000
 app.listen(3000, () => {
     console.log('HTTP to TCP API is running on port 3000.');
 });
-
