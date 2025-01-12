@@ -19,11 +19,15 @@ function loadValidCommandsFromCSV(filePath) {
     const lines = data.split('\n');
 
     lines.forEach((line) => {
-        const [command, description, params] = line.split(',');
-        if (command && description && params) {
-            VALID_COMMANDS[command.trim()] = {
-                description: description.trim(),
-                params: parseParams(params.trim()),
+        const parts = line.match(/(?:[^,"']+|"(?:\\.|[^"])*")+/g); // Match CSV fields, considering quoted strings
+        if (parts && parts.length >= 3) {
+            const command = parts[0].trim();
+            const description = parts[1].trim().replace(/^"|"$/g, ''); // Remove double quotes
+            const params = parts.slice(2).join(',').trim(); // Combine and trim remaining parts as parameters
+
+            VALID_COMMANDS[command] = {
+                description,
+                params: parseParams(params),
             };
         }
     });
@@ -129,14 +133,15 @@ app.post('/connect', (req, res) => {
     tcpClient = new net.Socket();
 
     tcpClient.connect(port, host, () => {
+        tcpClient.write("VCL 1 0\r\n"); // Set response termination to CRLF
         res.json({ message: `Connected to ${servers[serverIndex].name}.` });
     });
 
     tcpClient.on('data', (data) => {
-        const response = data.toString();
+        const response = data.toString().split(/\r?\n/).filter(line => line.trim() !== ''); // Handle CRLF-delimited responses
         if (responseCallbacks.length > 0) {
             const callback = responseCallbacks.shift();
-            callback(response);
+            callback(response.join(' ')); // Concatenate multiline response into one string
         }
     });
 
