@@ -195,7 +195,125 @@ app.post('/send', (req, res) => {
     });
 });
 
+
+
 // Start the server and listen on port 3000
 app.listen(3000, () => {
     console.log('HTTP to TCP API is running on port 3000.');
+});
+
+// --- Optional: semantic wrappers for HomeKit/Homebridge-style calls ---
+// These routes DO NOT replace /send. They provide friendly endpoints and
+// internally build the ASCII command using a simple template map.
+// If ./semantic.json exists, we'll use it; otherwise these routes return 400.
+
+let semantic = null;
+try {
+  semantic = require('./semantic.json');
+  // Expected shape:
+  // {
+  //   "lights": {
+  //     "Kitchen": {
+  //       "on": "VLA <id> 1 100",
+  //       "off": "VLA <id> 0 0",
+  //       "level": "VLA <id> 1 <value>",
+  //       "id": "L01" // optional fixed ID
+  //     }
+  //   },
+  //   "tvs": {
+  //     "FamilyRoom": { "on": "TVP <id> 1", "off": "TVP <id> 0", "id": "TV1" }
+  //   }
+  // }
+} catch (_) {
+  semantic = null; // optional file
+}
+
+function formatTemplate(tpl, ctx) {
+  return tpl
+    .replace(/<id>/g, ctx.id)
+    .replace(/<value>/g, String(ctx.value ?? ''))
+    .trim();
+}
+
+// Promise-based helper that reuses your validator + response queue
+function sendAndAwait(message) {
+  return new Promise((resolve, reject) => {
+    if (!tcpClient) return reject(new Error('Not connected to any TCP server.'));
+    const validation = validateCommand(message);
+    if (!validation.valid) {
+      const err = new Error(validation.message);
+      err.code = validation.statusCode;
+      return reject(err);
+    }
+    const { command, modifier, params } = validation;
+    const formattedMessage = `${command}${modifier} ${params.join(' ')}\r`;
+    tcpClient.write(formattedMessage);
+
+    responseCallbacks.push((response) => {
+      logCommand(message, response);
+      const parsedResponse = response.trim().split(/\s+/);
+      resolve({ message: `Message: ${message}`, response: parsedResponse });
+    });
+  });
+}
+
+// Lights
+app.post('/lights/:name/on', async (req, res) => {
+  try {
+    if (!semantic?.lights?.[req.params.name]?.on) {
+      return res.status(400).json({ message: 'No template for this light/on. Add to semantic.json.' });
+    }
+    const id = semantic.lights[req.params.name].id || req.params.name;
+    const cmd = formatTemplate(semantic.lights[req.params.name].on, { id });
+    res.json(await sendAndAwait(cmd));
+  } catch (e) { res.status(e.code || 500).json({ message: e.message || 'Failed' }); }
+});
+
+app.post('/lights/:name/off', async (req, res) => {
+  try {
+    if (!semantic?.lights?.[req.params.name]?.off) {
+      return res.status(400).json({ message: 'No template for this light/off. Add to semantic.json.' });
+    }
+    const id = semantic.lights[req.params.name].id || req.params.name;
+    const cmd = formatTemplate(semantic.lights[req.params.name].off, { id });
+    res.json(await sendAndAwait(cmd));
+  } catch (e) { res.status(e.code || 500).json({ message: e.message || 'Failed' }); }
+});
+
+app.post('/lights/:name/level', async (req, res) => {
+  try {
+    const value = Number(req.body?.value);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      return res.status(400).json({ message: 'value must be 0..100' });
+    }
+    if (!semantic?.lights?.[req.params.name]?.level) {
+      return res.status(400).json({ message: 'No template for this light/level. Add to semantic.json.' });
+    }
+    const id = semantic.lights[req.params.name].id || req.params.name;
+    const cmd = formatTemplate(semantic.lights[req.params.name].level, { id, value });
+    res.json(await sendAndAwait(cmd));
+  } catch (e) { res.status(e.code || 500).json({ message: e.message || 'Failed' }); }
+});
+
+// TVs
+app.post('/tvs/:name/on', async (req, res) => {
+  try {
+    if (!semantic?.tvs?.[req.params.name]?.on) {
+      return res.status(400).json({ message: 'No template for this tv/on. Add to semantic.json.' });
+    }
+    const id = semantic.tvs[req.params.name].id || req.params.name;
+    const cmd = formatTemplate(semantic.tvs[req.params.name].on, { id });
+    res.json(await sendAndAwait(cmd));
+  } catch (e) { res.status(e.code || 500).json({ message: e.message || 'Failed' }); }
+});
+
+app.post('/tvs/:name/off', async (req, res) => {
+  try {
+    if (!semantic?.tvs?.[req.params.name]?.off) {
+      return res.status(400).json({ message: 'No template for this tv/off. Add to semantic.json.' });
+    }
+    const id = semantic.tvs[req.params.name].id || req.params.name;
+    const cmd = formatTemplate(semantic.tvs[req.params.name].off, { id });
+    res.json(await sendAndAwait(cmd));
+  } catch (e) { res.status(e.code || 500).json({ message: e.message || 'Failed' }); }
 });
