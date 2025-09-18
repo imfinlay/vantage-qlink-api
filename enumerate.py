@@ -41,11 +41,11 @@ def main():
 
         connect_to_server(1)  # Connect to the first server
 
-        # Send the "VCL 1 0" command after connecting
+        # Send the "VCL 1" command after connecting to set line format to end in CRLF
         vcl_response = send_command("VCL 1")
 
-        # Check that the response is "1 0"
-        if vcl_response.strip() != "1 0":
+        # Ensure the response is a list and check for ["1", "0"]
+        if not isinstance(vcl_response, list) or vcl_response != ["1", "0"]:
             print(f"Unexpected response to VCL command: {vcl_response}")
             return
 
@@ -91,7 +91,11 @@ def main():
 
             station_lines = stations_response.splitlines()
             num_stations = int(station_lines[0])  # First line indicates the number of stations
-            station_lines = station_lines[1:num_stations + 1]  # Extract station lines
+            station_lines = station_lines[1:]  # Extract station lines
+
+            if len(station_lines) != num_stations:
+                print(f"Mismatch in station count for master {master}. Expected {num_stations}, got {len(station_lines)}.")
+                continue
 
             for station_line in station_lines:
                 # Each line format: <master> <station> <type> <cfg> <ver> <6-bit> <serial no>
