@@ -42,23 +42,57 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
 // -------------------------------
-// Command validation via CSV
+// Commands.csv parsing & validation (rich)
 // -------------------------------
 const VALID_COMMANDS = new Set();
-function loadValidCommandsFromCSV(csvPath) {
+let COMMAND_ITEMS = []; // [{ command, description, params }]
+
+// Minimal CSV splitter that supports quoted fields and escaped quotes
+function splitCSVLine(line) {
+  const out = [];
+  let cur = '', inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if (ch === ',' && !inQuotes) {
+      out.push(cur); cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function loadCommandsCSV(csvPath) {
+  COMMAND_ITEMS = [];
+  VALID_COMMANDS.clear();
   try {
     const raw = fs.readFileSync(csvPath, 'utf8');
-    raw.split(/\r?\n/).forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const [cmd] = trimmed.split(',');
-      if (cmd) VALID_COMMANDS.add(cmd.trim());
-    });
+    const lines = raw.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#'));
+    if (!lines.length) return;
+
+    // Header detection
+    const first = splitCSVLine(lines[0]).map(s => s.trim().toLowerCase());
+    const hasHeader = first.includes('command');
+    const startIdx = hasHeader ? 1 : 0;
+
+    for (let i = startIdx; i < lines.length; i++) {
+      const [command = '', description = '', params = ''] = splitCSVLine(lines[i]).map(s => s.trim());
+      if (!command) continue;
+      VALID_COMMANDS.add(command);
+      COMMAND_ITEMS.push({ command, description, params });
+    }
   } catch (err) {
     console.warn(`[WARN] Could not load commands from ${csvPath}: ${err.message}`);
   }
 }
-loadValidCommandsFromCSV(path.join(__dirname, 'commands.csv'));
+
+const COMMANDS_CSV_PATH = path.join(__dirname, 'commands.csv');
+loadCommandsCSV(COMMANDS_CSV_PATH);
+console.log(`[init] Loaded ${VALID_COMMANDS.size} commands from ${COMMANDS_CSV_PATH}`);
 
 function logLine(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -195,7 +229,19 @@ app.post('/send', async (req, res) => {
 // -------------------------------
 app.get('/commands', (_req, res) => {
   const cmds = Array.from(VALID_COMMANDS.values()).sort();
-  res.json({ commands: cmds, count: cmds.length });
+  res.json({
+    commands: cmds,            // legacy list for backward-compat
+    count: cmds.length,
+    items: COMMAND_ITEMS       // rich objects for UI (command/description/params)
+  });
+});
+
+// Admin: reload commands.csv on demand (POST)
+app.post('/admin/reload-commands', (_req, res) => {
+  loadCommandsCSV(COMMANDS_CSV_PATH);
+  const count = VALID_COMMANDS.size;
+  console.log(`[admin] Reloaded commands: ${count}`);
+  res.json({ message: 'Commands reloaded', count });
 });
 
 // -------------------------------
