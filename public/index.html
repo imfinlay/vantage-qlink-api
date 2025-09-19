@@ -12,8 +12,8 @@
     .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
     .btn { cursor: pointer; padding: 6px 10px; border: 1px solid #888; border-radius: 6px; background:#fafafa; }
     .btn:hover { background:#f0f0f0; }
-    #output { white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd; border-radius: 6px; }
-    #log-container { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; background:#0b0b0b; color:#d7d7d7; border-radius: 6px; }
+    #output, #latest-response { white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd; border-radius: 6px; }
+    #log-container, #recv-container { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; background:#0b0b0b; color:#d7d7d7; border-radius: 6px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; border-bottom: 1px solid #f0f0f0; padding: 6px; vertical-align: top; }
     th { border-bottom: 1px solid #ddd; }
@@ -21,63 +21,91 @@
     input[type="number"] { width: 7ch; }
   </style>
   <script>
-    // ===== API helpers =====
+    // ==============================
+    // API helpers (robust & cache-busting)
+    // ==============================
     async function fetchServers() {
-      const res = await fetch('/servers');
+      const res = await fetch('/servers', { cache: 'no-store' });
       const data = await res.json();
-      return Array.isArray(data) ? data : (Array.isArray(data.servers) ? data.servers : []);
+      // Accept [{...}] or { servers: [...] }
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.servers)) return data.servers;
+      return [];
     }
     async function fetchCommands() {
-      const res = await fetch('/commands');
+      const res = await fetch('/commands', { cache: 'no-store' });
       const data = await res.json();
-      if (Array.isArray(data?.items) && data.items.length) return data.items; // rich shape
-      const cmds = Array.isArray(data?.commands) ? data.commands : [];       // fallback
-      return cmds.map(c => ({ command: c, params: '', description: '' }));
+      // Prefer rich shape
+      if (data && Array.isArray(data.items) && data.items.length) return data.items;
+      // Fallback to legacy string list
+      var cmds = (data && Array.isArray(data.commands)) ? data.commands : [];
+      return cmds.map(function(c){ return { command: c, params: '', description: '' }; });
     }
-    async function fetchLogs(limit = 200) {
-      const res = await fetch(`/logs?limit=${encodeURIComponent(limit)}`);
+    async function fetchLogs(limit) {
+      var n = parseInt(limit, 10); if (!Number.isFinite(n) || n <= 0) n = 200;
+      const res = await fetch('/logs?limit=' + encodeURIComponent(n), { cache: 'no-store' });
       const data = await res.json();
-      return Array.isArray(data) ? data : (Array.isArray(data.lines) ? data.lines : []);
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.lines)) return data.lines;
+      return [];
+    }
+    async function fetchRecv(limitBytes, encoding) {
+      var n = parseInt(limitBytes, 10); if (!Number.isFinite(n) || n <= 0) n = 2048;
+      var enc = encoding || 'utf8';
+      const res = await fetch('/recv?limitBytes=' + encodeURIComponent(n) + '&encoding=' + encodeURIComponent(enc), { cache: 'no-store' });
+      return res.json(); // { length, encoding, data }
     }
     async function connectToServer(serverIndex) {
-      const res = await fetch('/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverIndex }) });
+      const res = await fetch('/connect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverIndex: serverIndex })
+      });
       return res.json();
     }
     async function disconnect() {
       const res = await fetch('/disconnect', { method: 'POST' });
       return res.json();
     }
-    async function sendCommand(message) {
-      const res = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: message }) });
-      return res.json();
+    async function sendCommand(message, waitMs) {
+      var body = { command: message };
+      if (typeof waitMs === 'number' && waitMs > 0) body.waitMs = waitMs;
+      const res = await fetch('/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return res.json(); // { message, response? }
     }
     async function fetchStatus() {
-      const res = await fetch('/status');
+      const res = await fetch('/status', { cache: 'no-store' });
       return res.json();
     }
 
-    // ===== UI helpers =====
+    // ==============================
+    // UI helpers
+    // ==============================
     function populateServers(servers) {
       const select = document.getElementById('server-select');
       select.innerHTML = '';
-      servers.forEach((server, index) => {
+      servers.forEach(function(server, index){
         const option = document.createElement('option');
         option.value = index;
-        option.textContent = `${server.name} (${server.host}:${server.port})`;
+        option.textContent = server.name + ' (' + server.host + ':' + server.port + ')';
         select.appendChild(option);
       });
     }
 
     function getSelectedModifier() {
       const radios = document.querySelectorAll('input[name="modifier"]');
-      for (const radio of radios) { if (radio.checked) return radio.value; }
+      for (var i=0; i<radios.length; i++) { if (radios[i].checked) return radios[i].value; }
       return '';
     }
 
     function setStatusText(connectedObj) {
       const el = document.getElementById('status');
-      const connected = !!connectedObj.connected;
-      el.textContent = connected ? `Connected to ${connectedObj.server?.name || connectedObj.server?.host}` : 'Not connected';
+      var connected = connectedObj && !!connectedObj.connected;
+      var svr = (connectedObj && connectedObj.server) ? connectedObj.server : {};
+      var label = svr.name || svr.host || '';
+      el.textContent = connected ? ('Connected to ' + label) : 'Not connected';
     }
 
     async function onConnectClick() {
@@ -85,27 +113,38 @@
       const index = parseInt(select.value, 10);
       const result = await connectToServer(index);
       document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      const status = await fetchStatus();
-      setStatusText(status);
+      const status = await fetchStatus(); setStatusText(status);
     }
 
     async function onDisconnectClick() {
       const result = await disconnect();
       document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      const status = await fetchStatus();
-      setStatusText(status);
+      const status = await fetchStatus(); setStatusText(status);
     }
 
     async function onSendClick() {
       const input = document.getElementById('command-input');
       const modifier = getSelectedModifier();
       const message = input.value + (modifier || '');
-      const result = await sendCommand(message);
+      var waitMs = 0;
+      var chk = document.getElementById('wait-enable');
+      if (chk && chk.checked) {
+        waitMs = parseInt(document.getElementById('wait-ms').value, 10) || 0;
+      }
+      const result = await sendCommand(message, waitMs);
       document.getElementById('output').textContent = result.message || JSON.stringify(result);
+      var respBox = document.getElementById('latest-response');
+      if (result && result.response && typeof result.response.text === 'string') {
+        respBox.textContent = result.response.text;
+      } else {
+        respBox.textContent = '(no response captured)';
+      }
     }
 
-    // ===== Commands: searchable table =====
-    let __allCommands = [];
+    // ==============================
+    // Commands table (searchable)
+    // ==============================
+    var __allCommands = [];
 
     function renderCommandsTable(rows) {
       const tbody = document.getElementById('commands-tbody');
@@ -117,16 +156,17 @@
         td.textContent = 'No commands loaded (check commands.csv)';
         tr.appendChild(td); tbody.appendChild(tr); return;
       }
-      rows.forEach(({ command, params, description }) => {
+      rows.forEach(function(row){
+        var command = row.command || '', params = row.params || '', description = row.description || '';
         const tr = document.createElement('tr');
-        [command, params, description].forEach(text => {
+        [command, params, description].forEach(function(text){
           const td = document.createElement('td');
-          td.textContent = text || ''; td.style.padding = '6px';
+          td.textContent = text; td.style.padding = '6px';
           tr.appendChild(td);
         });
         tr.style.cursor = 'pointer';
         tr.title = 'Click to insert the command into the input box';
-        tr.addEventListener('click', () => {
+        tr.addEventListener('click', function(){
           const input = document.getElementById('command-input');
           input.value = command; input.focus();
         });
@@ -137,11 +177,10 @@
     function applyCommandFilter() {
       const q = (document.getElementById('cmd-filter').value || '').toLowerCase();
       if (!q) return renderCommandsTable(__allCommands);
-      const filtered = __allCommands.filter(({ command, params, description }) =>
-        (command && command.toLowerCase().includes(q)) ||
-        (params && params.toLowerCase().includes(q)) ||
-        (description && description.toLowerCase().includes(q))
-      );
+      const filtered = __allCommands.filter(function(row){
+        var c = row.command || '', p = row.params || '', d = row.description || '';
+        return c.toLowerCase().includes(q) || p.toLowerCase().includes(q) || d.toLowerCase().includes(q);
+      });
       renderCommandsTable(filtered);
     }
 
@@ -155,17 +194,18 @@
       }
     }
 
-    // ===== Logs live tail =====
-    let logTimer = null;
+    // ==============================
+    // Logs live tail
+    // ==============================
+    var logTimer = null;
     function stopLogTail() { if (logTimer) { clearInterval(logTimer); logTimer = null; } document.getElementById('tail-toggle').textContent = 'Start Tail'; }
     async function doLogFetchOnce() {
       const limit = parseInt(document.getElementById('log-limit').value, 10) || 200;
       const lines = await fetchLogs(limit);
       const box = document.getElementById('log-container');
       const auto = document.getElementById('auto-scroll').checked;
-      box.textContent = lines.join('
-'); if (auto) box.scrollTop = box.scrollHeight;
-      document.getElementById('log-count').textContent = `(${lines.length} lines)`;
+      box.textContent = lines.join('\n'); if (auto) box.scrollTop = box.scrollHeight;
+      document.getElementById('log-count').textContent = '(' + lines.length + ' lines)';
     }
     function startLogTail() {
       const intervalMs = parseInt(document.getElementById('log-interval').value, 10) || 2000;
@@ -176,14 +216,40 @@
     function toggleTail() { if (logTimer) { stopLogTail(); } else { startLogTail(); } }
     function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
 
-    // ===== Init =====
+    // ==============================
+    // Responses live tail (/recv)
+    // ==============================
+    var recvTimer = null;
+    function stopRecvTail() { if (recvTimer) { clearInterval(recvTimer); recvTimer = null; } document.getElementById('recv-toggle').textContent = 'Start Tail'; }
+    async function doRecvFetchOnce() {
+      const limit = parseInt(document.getElementById('recv-limit').value, 10) || 2048;
+      const enc = document.getElementById('recv-enc').value || 'utf8';
+      const res = await fetchRecv(limit, enc);
+      const box = document.getElementById('recv-container');
+      const auto = document.getElementById('recv-auto').checked;
+      box.textContent = (res && res.data) ? res.data : '';
+      if (auto) box.scrollTop = box.scrollHeight;
+      document.getElementById('recv-count').textContent = '(' + (res && res.length ? res.length : 0) + ' bytes)';
+    }
+    function startRecvTail() {
+      const intervalMs = parseInt(document.getElementById('recv-interval').value, 10) || 2000;
+      if (recvTimer) clearInterval(recvTimer);
+      recvTimer = setInterval(doRecvFetchOnce, intervalMs); doRecvFetchOnce();
+      document.getElementById('recv-toggle').textContent = 'Stop Tail';
+    }
+    function toggleRecv() { if (recvTimer) { stopRecvTail(); } else { startRecvTail(); } }
+    function clearRecvView() { document.getElementById('recv-container').textContent = ''; document.getElementById('recv-count').textContent = ''; }
+
+    // ==============================
+    // Init
+    // ==============================
     async function initialize() {
       try {
         const servers = await fetchServers();
         populateServers(servers);
         const status = await fetchStatus(); setStatusText(status);
-        await refreshCommandsUI(); startLogTail();
-        const f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
+        await refreshCommandsUI(); startLogTail(); startRecvTail();
+        var f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
       } catch (e) { console.error('Initialization error:', e); }
     }
     document.addEventListener('DOMContentLoaded', initialize);
@@ -212,11 +278,17 @@
         <label><input type="radio" name="modifier" value="$" /> $ (short)</label>
         <label><input type="radio" name="modifier" value="#" /> # (detailed)</label>
       </div>
+      <div class="row" style="gap: 8px;">
+        <label><input id="wait-enable" type="checkbox" /> Wait for response</label>
+        <label>Wait (ms) <input id="wait-ms" type="number" min="0" step="50" value="300" /></label>
+      </div>
       <button class="btn" id="send-btn" onclick="onSendClick()">Send</button>
     </div>
     <div style="margin-top: 8px;">
       <strong>Output:</strong>
       <pre id="output"></pre>
+      <strong>Latest Response:</strong> <span class="muted">(from /send)</span>
+      <pre id="latest-response"></pre>
     </div>
   </div>
 
@@ -252,6 +324,26 @@
       <button class="btn" onclick="clearLogView()">Clear View</button>
     </div>
     <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Responses <span id="recv-count" class="muted"></span></h2>
+    <div class="row">
+      <label>Bytes <input id="recv-limit" type="number" min="64" max="32768" step="64" value="2048" /></label>
+      <label>Interval (ms) <input id="recv-interval" type="number" min="250" step="250" value="2000" /></label>
+      <label>Encoding 
+        <select id="recv-enc">
+          <option value="utf8" selected>utf8</option>
+          <option value="hex">hex</option>
+          <option value="base64">base64</option>
+        </select>
+      </label>
+      <label><input id="recv-auto" type="checkbox" checked /> Auto-scroll</label>
+      <button class="btn" id="recv-toggle" onclick="toggleRecv()">Stop Tail</button>
+      <button class="btn" onclick="doRecvFetchOnce()">Fetch Once</button>
+      <button class="btn" onclick="clearRecvView()">Clear View</button>
+    </div>
+    <div id="recv-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
   </div>
 </body>
 </html>
