@@ -1,3 +1,9 @@
+// Settings to serve html 
+const path = require('path');
+const express = require('express');
+const app = require('./app') || express(); // use your existing app instance
+
+// app server
 const net = require('net');
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -195,7 +201,11 @@ app.post('/send', (req, res) => {
     });
 });
 
-
+// Serve html from public dir
+app.use('/', express.static(path.join(__dirname, 'public'), {
+  index: 'index.html',        // serve index.html at /
+  extensions: ['html']        // so /about can map to /about.html (optional)
+}));
 
 // Start the server and listen on port 3000
 app.listen(3000, () => {
