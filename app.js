@@ -1,12 +1,13 @@
 'use strict';
 
 // ===============================
-// Revised app.js
+// app.js (validation fixes + rich commands)
 // - Serves /public (index.html)
-// - HTTP -> TCP bridge with connect/disconnect/send
-// - /commands  : expose commands.csv
-// - /logs      : tail the app log
-// - PM2/systemd friendly, binds 0.0.0.0
+// - HTTP -> TCP bridge with connect / disconnect / send
+// - /commands : parses commands.csv => items [{command, params, description}] + legacy list
+// - /logs     : tail log file
+// - Validation now accepts commands with params/modifiers (e.g., "VEC 123", "VEC$")
+// - Binds 0.0.0.0, PM2/systemd friendly, keeps existing behavior intact
 // ===============================
 
 const path = require('path');
@@ -42,12 +43,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
 // -------------------------------
-// Commands.csv parsing & validation (rich)
+// Commands.csv parsing & validation
 // -------------------------------
 const VALID_COMMANDS = new Set();
 let COMMAND_ITEMS = []; // [{ command, description, params }]
 
-// Minimal CSV splitter that supports quoted fields and escaped quotes
 function splitCSVLine(line) {
   const out = [];
   let cur = '', inQuotes = false;
@@ -74,13 +74,15 @@ function loadCommandsCSV(csvPath) {
     const lines = raw.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#'));
     if (!lines.length) return;
 
-    // Header detection
     const first = splitCSVLine(lines[0]).map(s => s.trim().toLowerCase());
     const hasHeader = first.includes('command');
     const startIdx = hasHeader ? 1 : 0;
 
     for (let i = startIdx; i < lines.length; i++) {
-      const [command = '', description = '', params = ''] = splitCSVLine(lines[i]).map(s => s.trim());
+      const cols = splitCSVLine(lines[i]).map(s => s.trim());
+      const command = cols[0] || '';
+      const description = cols[1] || '';
+      const params = cols[2] || '';
       if (!command) continue;
       VALID_COMMANDS.add(command);
       COMMAND_ITEMS.push({ command, description, params });
@@ -100,7 +102,7 @@ function logLine(msg) {
 }
 
 // -------------------------------
-// Helpers
+// TCP helpers
 // -------------------------------
 function ensureDisconnected() {
   if (tcpClient) { try { tcpClient.destroy(); } catch (_) {} }
@@ -151,6 +153,37 @@ function tailFile(filePath, maxLines) {
 }
 
 // -------------------------------
+// Validation helpers (NEW)
+// -------------------------------
+function normalizeForValidation(input) {
+  // Trim, strip CR/LF, remove trailing modifiers like $ or # (one or more)
+  let s = String(input || '').replace(/[\r\n]+/g, '').trim();
+  s = s.replace(/[$#]+$/g, '');
+  return s;
+}
+
+function isKnownCommand(input) {
+  if (!input) return false;
+  if (VALID_COMMANDS.size === 0) return true; // no CSV => no validation
+
+  const s = normalizeForValidation(input);
+  const base = s.split(/\s+/)[0]; // token before first space
+
+  if (VALID_COMMANDS.has(s)) return true;     // exact match (no params)
+  if (VALID_COMMANDS.has(base)) return true;  // base token matches (with params)
+
+  // Fallback: prefix match for multi-word commands
+  const list = Array.from(VALID_COMMANDS.values());
+  for (const c of list) {
+    if (s === c) return true;
+    if (s.startsWith(c + ' ')) return true;
+    if (s.startsWith(c + '$')) return true;
+    if (s.startsWith(c + '#')) return true;
+  }
+  return false;
+}
+
+// -------------------------------
 // API
 // -------------------------------
 
@@ -197,18 +230,23 @@ app.post('/disconnect', (_req, res) => {
   res.json({ message: 'Disconnected.' });
 });
 
-// Send
+// Send (VALIDATION FIXED)
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
     const { command, data } = req.body || {};
+
     let payload = null;
     if (typeof command === 'string' && command.trim()) {
       const cmd = command.trim();
-      if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd)) {
+
+      if (!isKnownCommand(cmd)) {
+        const base = normalizeForValidation(cmd).split(/\s+/)[0];
+        logLine(`Invalid command rejected (base="${base}", raw="${cmd}")`);
         return res.status(400).json({ message: 'Invalid command.' });
       }
-      payload = cmd + '\r\n';
+
+      payload = cmd + '\r\n'; // CRLF line protocol preserved
       logLine(`CMD -> ${cmd}`);
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
@@ -216,6 +254,7 @@ app.post('/send', async (req, res) => {
     } else {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
+
     await sendToTCP(payload);
     return res.json({ message: 'Sent.' });
   } catch (err) {
@@ -224,30 +263,26 @@ app.post('/send', async (req, res) => {
   }
 });
 
-// -------------------------------
-// New: /commands (read-only)
-// -------------------------------
+// Commands (rich + legacy)
 app.get('/commands', (_req, res) => {
   const cmds = Array.from(VALID_COMMANDS.values()).sort();
   res.json({
-    commands: cmds,            // legacy list for backward-compat
+    commands: cmds,
     count: cmds.length,
-    items: COMMAND_ITEMS       // rich objects for UI (command/description/params)
+    items: COMMAND_ITEMS
   });
 });
 
-// Admin: reload commands.csv on demand (POST)
+// Admin: reload commands.csv on demand
 app.post('/admin/reload-commands', (_req, res) => {
   loadCommandsCSV(COMMANDS_CSV_PATH);
   const count = VALID_COMMANDS.size;
   console.log(`[admin] Reloaded commands: ${count}`);
+  logLine(`[admin] Reloaded commands: ${count}`);
   res.json({ message: 'Commands reloaded', count });
 });
 
-// -------------------------------
-// New: /logs (tail last N lines)
-// -------------------------------
-//   GET /logs?limit=200
+// Logs tail
 app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
@@ -259,7 +294,7 @@ app.get('/logs', (req, res) => {
 // SPA fallback (optional)
 // -------------------------------
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/admin')) {
     return next();
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
