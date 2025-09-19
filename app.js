@@ -4,9 +4,9 @@
 // Revised app.js
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
-// - Safe CSV command validation
-// - PM2/systemd friendly, binds to 0.0.0.0 by default
-// - Exports app when required; listens when run directly
+// - /commands  : expose commands.csv
+// - /logs      : tail the app log
+// - PM2/systemd friendly, binds 0.0.0.0
 // ===============================
 
 const path = require('path');
@@ -17,22 +17,13 @@ const express = require('express');
 // -------------------------------
 // Configuration
 // -------------------------------
-// Expect ./config.js to export at least:
-//   module.exports = {
-//     LOG_FILE_PATH: '/var/log/yourapp/http-to-tcp.log',
-//     servers: [ { name: 'Server A', host: '127.0.0.1', port: 9000 } ],
-//     HANDSHAKE: 'VCL 1 0\r\n' // optional, defaults shown below
-//   }
 const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
 const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE')
   ? config.HANDSHAKE
   : 'VCL 1 0\r\n';
 
-// Ensure log directory exists
-try {
-  fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true });
-} catch (_) {}
+try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
 // -------------------------------
 // Globals
@@ -40,22 +31,19 @@ try {
 const app = express();
 app.disable('x-powered-by');
 
-let tcpClient = null;       // active net.Socket or null
-let connectedServer = null; // { name, host, port } of current connection
+let tcpClient = null;       // active net.Socket
+let connectedServer = null; // { name, host, port }
 
 // -------------------------------
 // Middleware
 // -------------------------------
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static files from /public at site root
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
 // -------------------------------
-// Command validation via CSV (optional but preserved)
+// Command validation via CSV
 // -------------------------------
-// Load a list of valid commands from commands.csv (first column, ignore blanks/# comments)
 const VALID_COMMANDS = new Set();
 function loadValidCommandsFromCSV(csvPath) {
   try {
@@ -81,55 +69,28 @@ function logLine(msg) {
 // Helpers
 // -------------------------------
 function ensureDisconnected() {
-  if (tcpClient) {
-    try { tcpClient.destroy(); } catch (_) {}
-  }
+  if (tcpClient) { try { tcpClient.destroy(); } catch (_) {} }
   tcpClient = null;
   connectedServer = null;
 }
 
 function connectToServer(target) {
   return new Promise((resolve, reject) => {
-    // Clean any previous socket
     ensureDisconnected();
-
     const socket = new net.Socket();
     let done = false;
 
-    socket.setTimeout(10000); // 10s timeout to establish/idle
+    socket.setTimeout(10000);
 
     socket.once('connect', () => {
       tcpClient = socket;
       connectedServer = target;
-      try {
-        if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) {
-          tcpClient.write(HANDSHAKE);
-        }
-      } catch (_) {}
-      done = true;
-      resolve();
+      try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
+      done = true; resolve();
     });
-
-    socket.once('timeout', () => {
-      if (!done) {
-        socket.destroy();
-        reject(new Error('TCP connection timeout'));
-      }
-    });
-
-    socket.once('error', (err) => {
-      if (!done) {
-        socket.destroy();
-        reject(err || new Error('TCP connection error'));
-      }
-    });
-
-    socket.once('close', () => {
-      if (tcpClient === socket) {
-        tcpClient = null;
-        connectedServer = null;
-      }
-    });
+    socket.once('timeout', () => { if (!done) { socket.destroy(); reject(new Error('TCP connection timeout')); } });
+    socket.once('error', (err) => { if (!done) { socket.destroy(); reject(err || new Error('TCP connection error')); } });
+    socket.once('close', () => { if (tcpClient === socket) { tcpClient = null; connectedServer = null; } });
 
     socket.connect(target.port, target.host);
   });
@@ -140,21 +101,26 @@ function sendToTCP(data) {
     if (!tcpClient) return reject(new Error('Not connected'));
     try {
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
-      tcpClient.write(buf, (err) => {
-        if (err) return reject(err);
-        resolve();
-      });
-    } catch (err) {
-      reject(err);
-    }
+      tcpClient.write(buf, (err) => (err ? reject(err) : resolve()));
+    } catch (err) { reject(err); }
   });
 }
 
+function tailFile(filePath, maxLines) {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const text = fs.readFileSync(filePath, 'utf8');
+    const lines = text.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines.slice(-maxLines);
+  } catch (_) { return []; }
+}
+
 // -------------------------------
-// API Routes (prefix-free to preserve existing paths)
+// API
 // -------------------------------
 
-// List configured TCP targets
+// Servers list
 app.get('/servers', (_req, res) => {
   const list = Array.isArray(config.servers) ? config.servers.map((s, i) => ({
     index: i,
@@ -167,22 +133,17 @@ app.get('/servers', (_req, res) => {
 
 // Status
 app.get('/status', (_req, res) => {
-  res.json({
-    connected: Boolean(tcpClient),
-    server: connectedServer || null
-  });
+  res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
 });
 
-// Connect: { serverIndex: number }
+// Connect
 app.post('/connect', async (req, res) => {
   try {
     const { serverIndex } = req.body || {};
     const list = Array.isArray(config.servers) ? config.servers : [];
-
     if (typeof serverIndex !== 'number' || serverIndex < 0 || serverIndex >= list.length) {
       return res.status(400).json({ message: 'Invalid server index.' });
     }
-
     const target = list[serverIndex];
     await connectToServer(target);
     logLine(`Connected to ${target.name || target.host}:${target.port}`);
@@ -202,22 +163,18 @@ app.post('/disconnect', (_req, res) => {
   res.json({ message: 'Disconnected.' });
 });
 
-// Send command/data
-// Body supports either { command: 'CMD' } (validated against commands.csv)
-// or { data: 'raw text to send' } (sent as-is)
+// Send
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
-
     const { command, data } = req.body || {};
-
     let payload = null;
     if (typeof command === 'string' && command.trim()) {
       const cmd = command.trim();
       if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd)) {
         return res.status(400).json({ message: 'Invalid command.' });
       }
-      payload = cmd + '\r\n'; // common CRLF line protocol
+      payload = cmd + '\r\n';
       logLine(`CMD -> ${cmd}`);
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
@@ -225,7 +182,6 @@ app.post('/send', async (req, res) => {
     } else {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
-
     await sendToTCP(payload);
     return res.json({ message: 'Sent.' });
   } catch (err) {
@@ -235,10 +191,29 @@ app.post('/send', async (req, res) => {
 });
 
 // -------------------------------
-// Fallback for SPA routing (optional; keeps APIs working)
+// New: /commands (read-only)
+// -------------------------------
+app.get('/commands', (_req, res) => {
+  const cmds = Array.from(VALID_COMMANDS.values()).sort();
+  res.json({ commands: cmds, count: cmds.length });
+});
+
+// -------------------------------
+// New: /logs (tail last N lines)
+// -------------------------------
+//   GET /logs?limit=200
+app.get('/logs', (req, res) => {
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
+  const lines = tailFile(LOG_FILE_PATH, limit);
+  res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
+});
+
+// -------------------------------
+// SPA fallback (optional)
 // -------------------------------
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs')) {
     return next();
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
@@ -257,5 +232,5 @@ if (require.main === module) {
     console.log(`HTTP to TCP API listening on http://${HOST}:${PORT}`);
   });
 } else {
-  module.exports = app; // allow server.js to require this without double listen
+  module.exports = app;
 }
