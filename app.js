@@ -1,13 +1,14 @@
 'use strict';
 
 // ===============================
-// app.js (validation fixes + rich commands)
+// Revised app.js (responses + recv tail)
 // - Serves /public (index.html)
-// - HTTP -> TCP bridge with connect / disconnect / send
-// - /commands : parses commands.csv => items [{command, params, description}] + legacy list
-// - /logs     : tail log file
-// - Validation now accepts commands with params/modifiers (e.g., "VEC 123", "VEC$")
-// - Binds 0.0.0.0, PM2/systemd friendly, keeps existing behavior intact
+// - HTTP -> TCP bridge with connect/disconnect/send
+// - /commands  : expose commands.csv (rich)
+// - /logs      : tail the app log
+// - /recv      : expose recent TCP bytes (utf8/hex/base64)
+// - /send now supports optional waitMs to return response bytes
+// - PM2/systemd friendly, binds 0.0.0.0
 // ===============================
 
 const path = require('path');
@@ -35,6 +36,24 @@ app.disable('x-powered-by');
 let tcpClient = null;       // active net.Socket
 let connectedServer = null; // { name, host, port }
 
+// Recent TCP bytes buffer for /recv and send responses
+const MAX_RECV_BYTES = 32768; // cap to 32KB
+let RECV_BUFFER = Buffer.alloc(0);
+function appendRecv(buf) {
+  try {
+    if (!Buffer.isBuffer(buf)) buf = Buffer.from(String(buf));
+    RECV_BUFFER = Buffer.concat([RECV_BUFFER, buf]);
+    if (RECV_BUFFER.length > MAX_RECV_BYTES) {
+      RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - MAX_RECV_BYTES);
+    }
+    // lightweight log (truncate)
+    const preview = buf.toString('utf8').replace(/\r?\n/g, ' ').slice(0, 200);
+    if (preview) logLine(`RX <- ${preview}`);
+  } catch (_) {}
+}
+
+function resetRecv() { RECV_BUFFER = Buffer.alloc(0); }
+
 // -------------------------------
 // Middleware
 // -------------------------------
@@ -43,7 +62,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
 // -------------------------------
-// Commands.csv parsing & validation
+// Commands.csv parsing & validation (rich)
 // -------------------------------
 const VALID_COMMANDS = new Set();
 let COMMAND_ITEMS = []; // [{ command, description, params }]
@@ -74,15 +93,13 @@ function loadCommandsCSV(csvPath) {
     const lines = raw.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#'));
     if (!lines.length) return;
 
+    // Header detection
     const first = splitCSVLine(lines[0]).map(s => s.trim().toLowerCase());
     const hasHeader = first.includes('command');
     const startIdx = hasHeader ? 1 : 0;
 
     for (let i = startIdx; i < lines.length; i++) {
-      const cols = splitCSVLine(lines[i]).map(s => s.trim());
-      const command = cols[0] || '';
-      const description = cols[1] || '';
-      const params = cols[2] || '';
+      const [command = '', description = '', params = ''] = splitCSVLine(lines[i]).map(s => s.trim());
       if (!command) continue;
       VALID_COMMANDS.add(command);
       COMMAND_ITEMS.push({ command, description, params });
@@ -102,12 +119,16 @@ function logLine(msg) {
 }
 
 // -------------------------------
-// TCP helpers
+// Helpers
 // -------------------------------
 function ensureDisconnected() {
-  if (tcpClient) { try { tcpClient.destroy(); } catch (_) {} }
+  if (tcpClient) {
+    try { tcpClient.removeAllListeners('data'); } catch (_) {}
+    try { tcpClient.destroy(); } catch (_) {}
+  }
   tcpClient = null;
   connectedServer = null;
+  resetRecv();
 }
 
 function connectToServer(target) {
@@ -121,6 +142,8 @@ function connectToServer(target) {
     socket.once('connect', () => {
       tcpClient = socket;
       connectedServer = target;
+      resetRecv();
+      socket.on('data', appendRecv);
       try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
       done = true; resolve();
     });
@@ -152,36 +175,7 @@ function tailFile(filePath, maxLines) {
   } catch (_) { return []; }
 }
 
-// -------------------------------
-// Validation helpers (NEW)
-// -------------------------------
-function normalizeForValidation(input) {
-  // Trim, strip CR/LF, remove trailing modifiers like $ or # (one or more)
-  let s = String(input || '').replace(/[\r\n]+/g, '').trim();
-  s = s.replace(/[$#]+$/g, '');
-  return s;
-}
-
-function isKnownCommand(input) {
-  if (!input) return false;
-  if (VALID_COMMANDS.size === 0) return true; // no CSV => no validation
-
-  const s = normalizeForValidation(input);
-  const base = s.split(/\s+/)[0]; // token before first space
-
-  if (VALID_COMMANDS.has(s)) return true;     // exact match (no params)
-  if (VALID_COMMANDS.has(base)) return true;  // base token matches (with params)
-
-  // Fallback: prefix match for multi-word commands
-  const list = Array.from(VALID_COMMANDS.values());
-  for (const c of list) {
-    if (s === c) return true;
-    if (s.startsWith(c + ' ')) return true;
-    if (s.startsWith(c + '$')) return true;
-    if (s.startsWith(c + '#')) return true;
-  }
-  return false;
-}
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 // -------------------------------
 // API
@@ -230,23 +224,23 @@ app.post('/disconnect', (_req, res) => {
   res.json({ message: 'Disconnected.' });
 });
 
-// Send (VALIDATION FIXED)
+// Send (optional response capture)
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
-    const { command, data } = req.body || {};
+    const body = req.body || {};
+    const { command, data } = body;
+    const waitMs = Number(body.waitMs || 0);
 
     let payload = null;
     if (typeof command === 'string' && command.trim()) {
       const cmd = command.trim();
-
-      if (!isKnownCommand(cmd)) {
-        const base = normalizeForValidation(cmd).split(/\s+/)[0];
-        logLine(`Invalid command rejected (base="${base}", raw="${cmd}")`);
+      // Soft validation: accept base token with params and trailing modifiers
+      const base = cmd.replace(/[\r\n]+/g, '').replace(/[$#]+$/g, '').split(/\s+/)[0];
+      if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd) && !VALID_COMMANDS.has(base)) {
         return res.status(400).json({ message: 'Invalid command.' });
       }
-
-      payload = cmd + '\r\n'; // CRLF line protocol preserved
+      payload = cmd + '\r\n';
       logLine(`CMD -> ${cmd}`);
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
@@ -255,8 +249,22 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
 
+    const startLen = RECV_BUFFER.length;
     await sendToTCP(payload);
-    return res.json({ message: 'Sent.' });
+
+    let response = null;
+    if (waitMs > 0) {
+      await sleep(waitMs);
+      const buf = RECV_BUFFER.slice(startLen);
+      response = {
+        bytes: buf.length,
+        text: buf.toString('utf8'),
+        hex: buf.toString('hex'),
+        base64: buf.toString('base64')
+      };
+    }
+
+    return res.json({ message: 'Sent.', response });
   } catch (err) {
     logLine(`Send error: ${err.message}`);
     return res.status(500).json({ message: 'Failed to send.' });
@@ -290,11 +298,24 @@ app.get('/logs', (req, res) => {
   res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
 
+// Recent TCP receive buffer
+app.get('/recv', (req, res) => {
+  const limitRaw = parseInt(req.query.limitBytes, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), MAX_RECV_BYTES) : 2048;
+  const encoding = (req.query.encoding || 'utf8').toString().toLowerCase();
+  const slice = RECV_BUFFER.slice(Math.max(0, RECV_BUFFER.length - limit));
+  let data;
+  if (encoding === 'hex') data = slice.toString('hex');
+  else if (encoding === 'base64') data = slice.toString('base64');
+  else data = slice.toString('utf8');
+  res.json({ length: slice.length, encoding, data });
+});
+
 // -------------------------------
 // SPA fallback (optional)
 // -------------------------------
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/admin')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/recv') || req.path.startsWith('/admin')) {
     return next();
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
