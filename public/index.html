@@ -6,8 +6,9 @@
     <title>TCP Command Console</title>
     <script>
         async function fetchServers() {
-            const response = await fetch('/servers');
-            return response.json();
+            const res = await fetch('/servers');
+            const data = await res.json();
+            return Array.isArray(data) ? data : (Array.isArray(data.servers) ? data.servers : []);
         }
 
         async function fetchCommands() {
@@ -29,78 +30,87 @@
             return response.json();
         }
 
+        async function disconnect() {
+            const response = await fetch('/disconnect', { method: 'POST' });
+            return response.json();
+        }
+
         async function sendCommand(message) {
             const response = await fetch('/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message }),
+                body: JSON.stringify({ command: message }),
             });
             return response.json();
         }
 
-        async function disconnect() {
-            const response = await fetch('/disconnect', {
-                method: 'POST',
-            });
+        async function fetchStatus() {
+            const response = await fetch('/status');
             return response.json();
         }
 
-        async function updateLogs() {
-            const logs = await fetchLogs();
-            const logContainer = document.getElementById('log-container');
-            logContainer.innerHTML = '';
-            logs.forEach(log => {
-                const logEntry = document.createElement('div');
-                logEntry.innerHTML = `<strong>${log.timestamp}</strong>: Command: ${log.message}, Response: ${log.response}`;
-                logContainer.appendChild(logEntry);
-            });
-        }
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            const servers = await fetchServers();
-            const serverDropdown = document.getElementById('server-select');
+        function populateServers(servers) {
+            const select = document.getElementById('server-select');
+            select.innerHTML = '';
             servers.forEach((server, index) => {
                 const option = document.createElement('option');
                 option.value = index;
                 option.textContent = `${server.name} (${server.host}:${server.port})`;
-                serverDropdown.appendChild(option);
+                select.appendChild(option);
             });
+        }
 
-            const commands = await fetchCommands();
-            const commandDropdown = document.getElementById('command-select');
-            commands.forEach(({ command, description }) => {
-                const option = document.createElement('option');
-                option.value = command;
-                option.textContent = `${command}: ${description}`;
-                commandDropdown.appendChild(option);
-            });
+        async function initialize() {
+            try {
+                const servers = await fetchServers();
+                populateServers(servers);
 
-            document.getElementById('connect-btn').addEventListener('click', async () => {
-                const serverIndex = serverDropdown.value;
-                const result = await connectToServer(serverIndex);
-                alert(result.message);
-                await updateLogs();
-            });
+                const status = await fetchStatus();
+                document.getElementById('status').textContent = status.connected
+                    ? `Connected to ${status.server?.name || status.server?.host}`
+                    : 'Not connected';
+            } catch (e) {
+                console.error('Initialization error:', e);
+            }
+        }
 
-            document.getElementById('send-btn').addEventListener('click', async () => {
-                const command = commandDropdown.value;
-                const modifier = document.querySelector('input[name="modifier"]:checked').value;
-                const params = document.getElementById('params').value;
-                const message = `${command}${modifier} ${params}`.trim();
-                const result = await sendCommand(message);
-                const output = document.getElementById('output');
-                output.textContent = `Message: ${message}\nResponse: ${result.response || result.message}`;
-                await updateLogs();
-            });
+        document.addEventListener('DOMContentLoaded', initialize);
 
-            document.getElementById('disconnect-btn').addEventListener('click', async () => {
-                const result = await disconnect();
-                alert(result.message);
-                await updateLogs();
-            });
+        function getSelectedModifier() {
+            const radios = document.querySelectorAll('input[name="modifier"]');
+            for (const radio of radios) {
+                if (radio.checked) return radio.value;
+            }
+            return '';
+        }
 
-            await updateLogs();
-        });
+        async function onConnectClick() {
+            const select = document.getElementById('server-select');
+            const index = parseInt(select.value, 10);
+            const result = await connectToServer(index);
+            document.getElementById('output').textContent = result.message || JSON.stringify(result);
+            const status = await fetchStatus();
+            document.getElementById('status').textContent = status.connected
+                ? `Connected to ${status.server?.name || status.server?.host}`
+                : 'Not connected';
+        }
+
+        async function onDisconnectClick() {
+            const result = await disconnect();
+            document.getElementById('output').textContent = result.message || JSON.stringify(result);
+            const status = await fetchStatus();
+            document.getElementById('status').textContent = status.connected
+                ? `Connected to ${status.server?.name || status.server?.host}`
+                : 'Not connected';
+        }
+
+        async function onSendClick() {
+            const input = document.getElementById('command-input');
+            const modifier = getSelectedModifier();
+            const message = input.value + (modifier || '');
+            const result = await sendCommand(message);
+            document.getElementById('output').textContent = result.message || JSON.stringify(result);
+        }
     </script>
 </head>
 <body>
@@ -108,28 +118,30 @@
     <div>
         <label for="server-select">Select Server:</label>
         <select id="server-select"></select>
-        <button id="connect-btn">Connect</button>
-        <button id="disconnect-btn">Disconnect</button>
+        <button id="connect-btn" onclick="onConnectClick()">Connect</button>
+        <button id="disconnect-btn" onclick="onDisconnectClick()">Disconnect</button>
+        <span id="status">Not connected</span>
     </div>
-    <div>
-        <label for="command-select">Select Command:</label>
-        <select id="command-select"></select>
-        <input id="params" type="text" placeholder="Enter parameters">
+
+    <div style="margin-top: 1rem;">
+        <h3>Send Command</h3>
+        <input id="command-input" type="text" placeholder="Enter command" />
         <div>
-            <label><input type="radio" name="modifier" value="" checked>No Modifier</label>
-            <label><input type="radio" name="modifier" value="!">! (no response)</label>
-            <label><input type="radio" name="modifier" value="@">@ (regular response)</label>
+            <label><input type="radio" name="modifier" value="" checked>None</label>
+            <label><input type="radio" name="modifier" value="$">$ (short response)</label>
             <label><input type="radio" name="modifier" value="#"># (detailed response)</label>
         </div>
-        <button id="send-btn">Send</button>
+        <button id="send-btn" onclick="onSendClick()">Send</button>
     </div>
-    <div>
+
+    <div style="margin-top: 1rem;">
         <h3>Output:</h3>
-        <pre id="output"></pre>
+        <pre id="output" style="white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd;"></pre>
     </div>
-    <div>
+
+    <div style="margin-top: 1rem;">
         <h3>Log:</h3>
-        <div id="log-container" style="border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto;"></div>
+        <div id="log-container" style="border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto;">(Logs endpoint not wired yet)</div>
     </div>
 </body>
 </html>
