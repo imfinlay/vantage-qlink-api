@@ -1,5 +1,5 @@
 V?S,Allows Dimmer Station loads to have their Max Adjust and Max Error properties changed.,<master number> <C+6bit address of station> <97> <Max Adjust (in HEX)> <Max Error>
-V?V ,Return the Vacation Function Load History on specific Master Controller,<master>
+V?V,Return the Vacation Function Load History on specific Master Controller,<master>
 V?D,Return the Vacation Function Load History on specific Master Controller for a specific day,<master> <specific day> <limit report for specific day>
 VCL,Set the return delimiter characters to [CR] or [CR/LF] and the return format to regular or detailed. Use for setting up RS-232 communication with other system,<flag>
 VEC,Echo the number sent to the system. Used for communication testing.,<number>

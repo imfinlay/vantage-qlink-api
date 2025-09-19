@@ -14,15 +14,14 @@
     .btn:hover { background:#f0f0f0; }
     #output { white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd; border-radius: 6px; }
     #log-container { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; background:#0b0b0b; color:#d7d7d7; border-radius: 6px; }
-    #commands-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
-    .cmd-pill { border: 1px solid #bbb; padding: 6px 8px; border-radius: 999px; background:#fff; cursor: pointer; text-align: center; }
-    .cmd-pill:hover { background:#f3f3f3; }
-    label { user-select: none; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #f0f0f0; padding: 6px; vertical-align: top; }
+    th { border-bottom: 1px solid #ddd; }
     .muted { color:#666; font-size: 0.9em; }
     input[type="number"] { width: 7ch; }
   </style>
   <script>
-    // ===== API helpers (kept + extended) =====
+    // ===== API helpers =====
     async function fetchServers() {
       const res = await fetch('/servers');
       const data = await res.json();
@@ -31,7 +30,9 @@
     async function fetchCommands() {
       const res = await fetch('/commands');
       const data = await res.json();
-      return Array.isArray(data) ? data : (Array.isArray(data.commands) ? data.commands : []);
+      if (Array.isArray(data?.items) && data.items.length) return data.items; // rich shape
+      const cmds = Array.isArray(data?.commands) ? data.commands : [];       // fallback
+      return cmds.map(c => ({ command: c, params: '', description: '' }));
     }
     async function fetchLogs(limit = 200) {
       const res = await fetch(`/logs?limit=${encodeURIComponent(limit)}`);
@@ -39,10 +40,7 @@
       return Array.isArray(data) ? data : (Array.isArray(data.lines) ? data.lines : []);
     }
     async function connectToServer(serverIndex) {
-      const res = await fetch('/connect', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverIndex }),
-      });
+      const res = await fetch('/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverIndex }) });
       return res.json();
     }
     async function disconnect() {
@@ -50,10 +48,7 @@
       return res.json();
     }
     async function sendCommand(message) {
-      const res = await fetch('/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: message }),
-      });
+      const res = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: message }) });
       return res.json();
     }
     async function fetchStatus() {
@@ -75,18 +70,14 @@
 
     function getSelectedModifier() {
       const radios = document.querySelectorAll('input[name="modifier"]');
-      for (const radio of radios) {
-        if (radio.checked) return radio.value;
-      }
+      for (const radio of radios) { if (radio.checked) return radio.value; }
       return '';
     }
 
     function setStatusText(connectedObj) {
       const el = document.getElementById('status');
       const connected = !!connectedObj.connected;
-      el.textContent = connected
-        ? `Connected to ${connectedObj.server?.name || connectedObj.server?.host}`
-        : 'Not connected';
+      el.textContent = connected ? `Connected to ${connectedObj.server?.name || connectedObj.server?.host}` : 'Not connected';
     }
 
     async function onConnectClick() {
@@ -113,78 +104,86 @@
       document.getElementById('output').textContent = result.message || JSON.stringify(result);
     }
 
-    // ===== Commands UI =====
+    // ===== Commands: searchable table =====
+    let __allCommands = [];
+
+    function renderCommandsTable(rows) {
+      const tbody = document.getElementById('commands-tbody');
+      tbody.innerHTML = '';
+      if (!rows.length) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3; td.className = 'muted'; td.style.padding = '8px';
+        td.textContent = 'No commands loaded (check commands.csv)';
+        tr.appendChild(td); tbody.appendChild(tr); return;
+      }
+      rows.forEach(({ command, params, description }) => {
+        const tr = document.createElement('tr');
+        [command, params, description].forEach(text => {
+          const td = document.createElement('td');
+          td.textContent = text || ''; td.style.padding = '6px';
+          tr.appendChild(td);
+        });
+        tr.style.cursor = 'pointer';
+        tr.title = 'Click to insert the command into the input box';
+        tr.addEventListener('click', () => {
+          const input = document.getElementById('command-input');
+          input.value = command; input.focus();
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    function applyCommandFilter() {
+      const q = (document.getElementById('cmd-filter').value || '').toLowerCase();
+      if (!q) return renderCommandsTable(__allCommands);
+      const filtered = __allCommands.filter(({ command, params, description }) =>
+        (command && command.toLowerCase().includes(q)) ||
+        (params && params.toLowerCase().includes(q)) ||
+        (description && description.toLowerCase().includes(q))
+      );
+      renderCommandsTable(filtered);
+    }
+
     async function refreshCommandsUI() {
       try {
-        const commands = await fetchCommands();
-        const list = document.getElementById('commands-list');
-        list.innerHTML = '';
-        if (!commands.length) {
-          list.innerHTML = '<div class="muted">No commands loaded (check commands.csv)</div>';
-          return;
-        }
-        commands.forEach((cmd) => {
-          const pill = document.createElement('button');
-          pill.className = 'cmd-pill';
-          pill.type = 'button';
-          pill.textContent = cmd;
-          pill.title = 'Click to insert into the input box';
-          pill.addEventListener('click', () => {
-            const input = document.getElementById('command-input');
-            input.value = cmd;
-            input.focus();
-          });
-          list.appendChild(pill);
-        });
+        __allCommands = await fetchCommands();
+        renderCommandsTable(__allCommands);
       } catch (e) {
         console.error('Commands load failed:', e);
+        __allCommands = []; renderCommandsTable(__allCommands);
       }
     }
 
     // ===== Logs live tail =====
     let logTimer = null;
-    function stopLogTail() {
-      if (logTimer) { clearInterval(logTimer); logTimer = null; }
-      document.getElementById('tail-toggle').textContent = 'Start Tail';
-    }
+    function stopLogTail() { if (logTimer) { clearInterval(logTimer); logTimer = null; } document.getElementById('tail-toggle').textContent = 'Start Tail'; }
     async function doLogFetchOnce() {
       const limit = parseInt(document.getElementById('log-limit').value, 10) || 200;
       const lines = await fetchLogs(limit);
       const box = document.getElementById('log-container');
       const auto = document.getElementById('auto-scroll').checked;
-      box.textContent = lines.join('\n');
-      if (auto) box.scrollTop = box.scrollHeight;
+      box.textContent = lines.join('\n'); if (auto) box.scrollTop = box.scrollHeight;
       document.getElementById('log-count').textContent = `(${lines.length} lines)`;
     }
     function startLogTail() {
       const intervalMs = parseInt(document.getElementById('log-interval').value, 10) || 2000;
       if (logTimer) clearInterval(logTimer);
-      logTimer = setInterval(doLogFetchOnce, intervalMs);
-      doLogFetchOnce();
+      logTimer = setInterval(doLogFetchOnce, intervalMs); doLogFetchOnce();
       document.getElementById('tail-toggle').textContent = 'Stop Tail';
     }
-    function toggleTail() {
-      if (logTimer) { stopLogTail(); } else { startLogTail(); }
-    }
-    function clearLogView() {
-      document.getElementById('log-container').textContent = '';
-      document.getElementById('log-count').textContent = '';
-    }
+    function toggleTail() { if (logTimer) { stopLogTail(); } else { startLogTail(); } }
+    function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
 
     // ===== Init =====
     async function initialize() {
       try {
         const servers = await fetchServers();
         populateServers(servers);
-
-        const status = await fetchStatus();
-        setStatusText(status);
-
-        await refreshCommandsUI();
-        startLogTail(); // begin tailing by default
-      } catch (e) {
-        console.error('Initialization error:', e);
-      }
+        const status = await fetchStatus(); setStatusText(status);
+        await refreshCommandsUI(); startLogTail();
+        const f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
+      } catch (e) { console.error('Initialization error:', e); }
     }
     document.addEventListener('DOMContentLoaded', initialize);
   </script>
@@ -223,10 +222,22 @@
   <div class="card">
     <h2>Commands</h2>
     <div class="row">
-      <button class="btn" onclick="refreshCommandsUI()">Refresh Commands</button>
-      <span class="muted">Click a command to insert it into the input.</span>
+      <input id="cmd-filter" type="text" placeholder="Filter (command, params, description)" />
+      <button class="btn" onclick="refreshCommandsUI()">Refresh</button>
+      <span class="muted">Click a row to insert the command into the input.</span>
     </div>
-    <div id="commands-list" style="margin-top: 8px;"></div>
+    <div style="overflow:auto; margin-top:8px;">
+      <table id="commands-table">
+        <thead>
+          <tr>
+            <th>Command</th>
+            <th>Params</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody id="commands-tbody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
