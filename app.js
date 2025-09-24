@@ -1,7 +1,7 @@
 'use strict';
 
 // =========================================================
-// app.js (VGS status + API logging)
+// app.js (HTTP poll logging added)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
@@ -10,7 +10,7 @@
 // - /test/vsw  : press/release a VSW (for HomeKit etc.)
 // - /status/vgs: poll a switch state with VGS <m> <s> <b>
 //   Returns JSON or plain 0/1 when format=raw
-// - NEW: API commands are logged (CMD/API -> ...)
+// - Logs API-originated commands and HTTP polling attempts
 // =========================================================
 
 const path = require('path');
@@ -61,6 +61,24 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
 // -------------------------------
+// Logging helpers
+// -------------------------------
+function logLine(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try { fs.appendFileSync(LOG_FILE_PATH, line); } catch (_) {}
+}
+function clientIp(req){
+  try {
+    const xf = req.headers['x-forwarded-for'];
+    if (xf) return String(xf).split(',')[0].trim();
+  } catch (_) {}
+  return req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
+}
+function logHttp(req, msg){
+  try { logLine(`HTTP ${req.method} ${req.path} from ${clientIp(req)} -> ${msg}`); } catch (_) {}
+}
+
+// -------------------------------
 // Commands.csv parsing & validation (rich)
 // -------------------------------
 const VALID_COMMANDS = new Set();
@@ -108,13 +126,8 @@ const COMMANDS_CSV_PATH = path.join(__dirname, 'commands.csv');
 loadCommandsCSV(COMMANDS_CSV_PATH);
 console.log(`[init] Loaded ${VALID_COMMANDS.size} commands from ${COMMANDS_CSV_PATH}`);
 
-function logLine(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}\n`;
-  try { fs.appendFileSync(LOG_FILE_PATH, line); } catch (_) {}
-}
-
 // -------------------------------
-// Helpers
+// TCP helpers
 // -------------------------------
 function ensureDisconnected() {
   if (tcpClient) {
@@ -298,13 +311,15 @@ app.post('/send', async (req, res) => {
 //   POST /test/vsw { m,s,b,state,waitMs }
 app.get('/test/vsw', async (req, res) => {
   try {
-    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    if (!tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
     const m = parseInt(req.query.m, 10) || 2;
     const s = parseInt(req.query.s, 10) || 20;
     const b = parseInt(req.query.b, 10) || 7;
     const state = (req.query.state != null) ? String(req.query.state) : '1';
     const waitMs = Number(req.query.waitMs || 800);
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
+
+    logHttp(req, cmd);
 
     const startLen = RECV_BUFFER.length;
     await sendCmdLogged(cmd);
@@ -324,7 +339,7 @@ app.get('/test/vsw', async (req, res) => {
 
 app.post('/test/vsw', async (req, res) => {
   try {
-    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    if (!tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
     const body = req.body || {};
     const m = parseInt(body.m, 10) || 2;
     const s = parseInt(body.s, 10) || 20;
@@ -332,6 +347,8 @@ app.post('/test/vsw', async (req, res) => {
     const state = (body.state != null) ? String(body.state) : '1';
     const waitMs = Number(body.waitMs || 800);
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
+
+    logHttp(req, cmd);
 
     const startLen = RECV_BUFFER.length;
     await sendCmdLogged(cmd);
@@ -355,7 +372,7 @@ app.post('/test/vsw', async (req, res) => {
 //   - format=raw -> text/plain "0" or "1" (empty string if none)
 app.get('/status/vgs', async (req, res) => {
   try {
-    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    if (!tcpClient) { logHttp(req, 'VGS poll while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
     const m = parseInt(req.query.m, 10);
     const s = parseInt(req.query.s, 10);
     const b = parseInt(req.query.b, 10);
@@ -363,9 +380,11 @@ app.get('/status/vgs', async (req, res) => {
       return res.status(400).json({ ok:false, message: 'Missing or invalid m/s/b.' });
     }
 
+    const cmd = `VGS ${m} ${s} ${b}`;
+    logHttp(req, cmd);
+
     const quietMs = Number(req.query.quietMs || 200);
     const maxMs = Number(req.query.maxMs || 1200);
-    const cmd = `VGS ${m} ${s} ${b}`;
 
     const startLen = RECV_BUFFER.length;
     await sendCmdLogged(cmd);
