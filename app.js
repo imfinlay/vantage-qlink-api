@@ -1,14 +1,14 @@
 'use strict';
 
 // ===============================
-// Revised app.js (responses + recv tail)
+// app.js (with VSW HomeKit test route)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
 // - /logs      : tail the app log
 // - /recv      : expose recent TCP bytes (utf8/hex/base64)
-// - /send now supports optional waitMs to return response bytes
-// - PM2/systemd friendly, binds 0.0.0.0
+// - /send      : supports optional waitMs and quietMs
+// - /test/vsw  : convenience endpoint for VSW <m> <s> <b> <state>
 // ===============================
 
 const path = require('path');
@@ -21,9 +21,8 @@ const express = require('express');
 // -------------------------------
 const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
-const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE')
-  ? config.HANDSHAKE
-  : 'VCL 1 0\r\n';
+const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n';
+const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; // allow CR-only via config
 
 try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
@@ -46,12 +45,10 @@ function appendRecv(buf) {
     if (RECV_BUFFER.length > MAX_RECV_BYTES) {
       RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - MAX_RECV_BYTES);
     }
-    // lightweight log (truncate)
     const preview = buf.toString('utf8').replace(/\r?\n/g, ' ').slice(0, 200);
     if (preview) logLine(`RX <- ${preview}`);
   } catch (_) {}
 }
-
 function resetRecv() { RECV_BUFFER = Buffer.alloc(0); }
 
 // -------------------------------
@@ -93,7 +90,6 @@ function loadCommandsCSV(csvPath) {
     const lines = raw.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#'));
     if (!lines.length) return;
 
-    // Header detection
     const first = splitCSVLine(lines[0]).map(s => s.trim().toLowerCase());
     const hasHeader = first.includes('command');
     const startIdx = hasHeader ? 1 : 0;
@@ -183,12 +179,7 @@ function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 // Servers list
 app.get('/servers', (_req, res) => {
-  const list = Array.isArray(config.servers) ? config.servers.map((s, i) => ({
-    index: i,
-    name: s.name || `Server ${i}`,
-    host: s.host,
-    port: s.port
-  })) : [];
+  const list = Array.isArray(config.servers) ? config.servers.map((s, i) => ({ index: i, name: s.name || `Server ${i}` , host: s.host, port: s.port })) : [];
   res.json({ servers: list });
 });
 
@@ -224,13 +215,16 @@ app.post('/disconnect', (_req, res) => {
   res.json({ message: 'Disconnected.' });
 });
 
-// Send (optional response capture)
+// Send (supports waitMs and quietMs)
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
     const body = req.body || {};
     const { command, data } = body;
+
     const waitMs = Number(body.waitMs || 0);
+    const quietMs = Number(body.quietMs || 0);
+    const maxMs = Number(body.maxMs || 2000);
 
     let payload = null;
     if (typeof command === 'string' && command.trim()) {
@@ -240,7 +234,7 @@ app.post('/send', async (req, res) => {
       if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd) && !VALID_COMMANDS.has(base)) {
         return res.status(400).json({ message: 'Invalid command.' });
       }
-      payload = cmd + '\r\n';
+      payload = cmd + NL;
       logLine(`CMD -> ${cmd}`);
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
@@ -252,18 +246,36 @@ app.post('/send', async (req, res) => {
     const startLen = RECV_BUFFER.length;
     await sendToTCP(payload);
 
-    let response = null;
-    if (waitMs > 0) {
+    async function fixedWaitCapture() {
+      if (waitMs <= 0) return null;
       await sleep(waitMs);
       const buf = RECV_BUFFER.slice(startLen);
-      response = {
-        bytes: buf.length,
-        text: buf.toString('utf8'),
-        hex: buf.toString('hex'),
-        base64: buf.toString('base64')
-      };
+      return { bytes: buf.length, text: buf.toString('utf8'), hex: buf.toString('hex'), base64: buf.toString('base64') };
     }
 
+    async function quietCapture() {
+      if (quietMs <= 0) return null;
+      return await new Promise((resolve) => {
+        let timer = null;
+        let hardTimer = null;
+        const finish = () => {
+          if (timer) clearTimeout(timer);
+          if (hardTimer) clearTimeout(hardTimer);
+          if (tcpClient) tcpClient.removeListener('data', onData);
+          const buf = RECV_BUFFER.slice(startLen);
+          resolve({ bytes: buf.length, text: buf.toString('utf8'), hex: buf.toString('hex'), base64: buf.toString('base64') });
+        };
+        const onData = () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(finish, Math.max(quietMs, 1));
+        };
+        hardTimer = setTimeout(finish, Math.max(maxMs, quietMs || 0, 1));
+        timer = setTimeout(finish, Math.max(quietMs, 1));
+        if (tcpClient) tcpClient.on('data', onData);
+      });
+    }
+
+    const response = quietMs > 0 ? await quietCapture() : await fixedWaitCapture();
     return res.json({ message: 'Sent.', response });
   } catch (err) {
     logLine(`Send error: ${err.message}`);
@@ -271,14 +283,66 @@ app.post('/send', async (req, res) => {
   }
 });
 
+// Convenience: VSW HomeKit test route
+//   GET /test/vsw?m=2&s=1&b=3&state=1&waitMs=1000
+//   POST /test/vsw { m:2, s:1, b:3, state:1, waitMs:1000 }
+app.get('/test/vsw', async (req, res) => {
+  try {
+    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    const m = parseInt(req.query.m, 10) || 2;
+    const s = parseInt(req.query.s, 10) || 1;
+    const b = parseInt(req.query.b, 10) || 3;
+    const state = (req.query.state != null) ? String(req.query.state) : '1';
+    const waitMs = Number(req.query.waitMs || 1000);
+    const cmd = `VSW ${m} ${s} ${b} ${state}`;
+
+    const startLen = RECV_BUFFER.length;
+    await sendToTCP(cmd + NL);
+
+    let response = null;
+    if (waitMs > 0) {
+      await sleep(waitMs);
+      const buf = RECV_BUFFER.slice(startLen);
+      response = { bytes: buf.length, text: buf.toString('utf8') };
+    }
+    return res.json({ ok:true, sent: cmd, response });
+  } catch (err) {
+    logLine(`VSW test error: ${err.message}`);
+    return res.status(500).json({ ok:false, message: 'VSW test failed.' });
+  }
+});
+
+app.post('/test/vsw', async (req, res) => {
+  try {
+    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    const body = req.body || {};
+    const m = parseInt(body.m, 10) || 2;
+    const s = parseInt(body.s, 10) || 1;
+    const b = parseInt(body.b, 10) || 3;
+    const state = (body.state != null) ? String(body.state) : '1';
+    const waitMs = Number(body.waitMs || 1000);
+    const cmd = `VSW ${m} ${s} ${b} ${state}`;
+
+    const startLen = RECV_BUFFER.length;
+    await sendToTCP(cmd + NL);
+
+    let response = null;
+    if (waitMs > 0) {
+      await sleep(waitMs);
+      const buf = RECV_BUFFER.slice(startLen);
+      response = { bytes: buf.length, text: buf.toString('utf8') };
+    }
+    return res.json({ ok:true, sent: cmd, response });
+  } catch (err) {
+    logLine(`VSW test error: ${err.message}`);
+    return res.status(500).json({ ok:false, message: 'VSW test failed.' });
+  }
+});
+
 // Commands (rich + legacy)
 app.get('/commands', (_req, res) => {
   const cmds = Array.from(VALID_COMMANDS.values()).sort();
-  res.json({
-    commands: cmds,
-    count: cmds.length,
-    items: COMMAND_ITEMS
-  });
+  res.json({ commands: cmds, count: cmds.length, items: COMMAND_ITEMS });
 });
 
 // Admin: reload commands.csv on demand
@@ -315,7 +379,7 @@ app.get('/recv', (req, res) => {
 // SPA fallback (optional)
 // -------------------------------
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/recv') || req.path.startsWith('/admin')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/recv') || req.path.startsWith('/admin') || req.path.startsWith('/test')) {
     return next();
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
