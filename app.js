@@ -1,15 +1,16 @@
 'use strict';
 
-// ===============================
-// app.js (with VSW HomeKit test route)
+// ==============================================
+// app.js (VGS status endpoint + existing routes)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
 // - /logs      : tail the app log
 // - /recv      : expose recent TCP bytes (utf8/hex/base64)
-// - /send      : supports optional waitMs and quietMs
-// - /test/vsw  : convenience endpoint for VSW <m> <s> <b> <state>
-// ===============================
+// - /test/vsw  : convenience route to press/release VSW
+// - /status/vgs: poll a switch state with VGS <m> <s> <b>
+//   Returns JSON or plain 0/1 when format=raw
+// ==============================================
 
 const path = require('path');
 const fs = require('fs');
@@ -36,7 +37,7 @@ let tcpClient = null;       // active net.Socket
 let connectedServer = null; // { name, host, port }
 
 // Recent TCP bytes buffer for /recv and send responses
-const MAX_RECV_BYTES = 32768; // cap to 32KB
+const MAX_RECV_BYTES = 32768; // 32KB ring
 let RECV_BUFFER = Buffer.alloc(0);
 function appendRecv(buf) {
   try {
@@ -72,11 +73,8 @@ function splitCSVLine(line) {
     if (ch === '"') {
       if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
       else { inQuotes = !inQuotes; }
-    } else if (ch === ',' && !inQuotes) {
-      out.push(cur); cur = '';
-    } else {
-      cur += ch;
-    }
+    } else if (ch === ',' && !inQuotes) { out.push(cur); cur = ''; }
+    else { cur += ch; }
   }
   out.push(cur);
   return out;
@@ -173,6 +171,27 @@ function tailFile(filePath, maxLines) {
 
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
+async function waitQuiet(startLen, quietMs, maxMs) {
+  return await new Promise((resolve) => {
+    let timer = null;
+    let hardTimer = null;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      if (hardTimer) clearTimeout(hardTimer);
+      if (tcpClient) tcpClient.removeListener('data', onData);
+      const buf = RECV_BUFFER.slice(startLen);
+      resolve(buf);
+    };
+    const onData = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(finish, Math.max(quietMs, 1));
+    };
+    hardTimer = setTimeout(finish, Math.max(maxMs, quietMs || 0, 1));
+    timer = setTimeout(finish, Math.max(quietMs, 1));
+    if (tcpClient) tcpClient.on('data', onData);
+  });
+}
+
 // -------------------------------
 // API
 // -------------------------------
@@ -183,7 +202,7 @@ app.get('/servers', (_req, res) => {
   res.json({ servers: list });
 });
 
-// Status
+// Status of connection
 app.get('/status', (_req, res) => {
   res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
 });
@@ -246,36 +265,20 @@ app.post('/send', async (req, res) => {
     const startLen = RECV_BUFFER.length;
     await sendToTCP(payload);
 
-    async function fixedWaitCapture() {
-      if (waitMs <= 0) return null;
-      await sleep(waitMs);
-      const buf = RECV_BUFFER.slice(startLen);
-      return { bytes: buf.length, text: buf.toString('utf8'), hex: buf.toString('hex'), base64: buf.toString('base64') };
+    let buf = Buffer.alloc(0);
+    if (quietMs > 0) {
+      buf = await waitQuiet(startLen, quietMs, maxMs);
+    } else if (waitMs > 0) {
+      await sleep(waitMs); buf = RECV_BUFFER.slice(startLen);
     }
 
-    async function quietCapture() {
-      if (quietMs <= 0) return null;
-      return await new Promise((resolve) => {
-        let timer = null;
-        let hardTimer = null;
-        const finish = () => {
-          if (timer) clearTimeout(timer);
-          if (hardTimer) clearTimeout(hardTimer);
-          if (tcpClient) tcpClient.removeListener('data', onData);
-          const buf = RECV_BUFFER.slice(startLen);
-          resolve({ bytes: buf.length, text: buf.toString('utf8'), hex: buf.toString('hex'), base64: buf.toString('base64') });
-        };
-        const onData = () => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(finish, Math.max(quietMs, 1));
-        };
-        hardTimer = setTimeout(finish, Math.max(maxMs, quietMs || 0, 1));
-        timer = setTimeout(finish, Math.max(quietMs, 1));
-        if (tcpClient) tcpClient.on('data', onData);
-      });
-    }
+    const response = (waitMs > 0 || quietMs > 0) ? {
+      bytes: buf.length,
+      text: buf.toString('utf8'),
+      hex: buf.toString('hex'),
+      base64: buf.toString('base64')
+    } : null;
 
-    const response = quietMs > 0 ? await quietCapture() : await fixedWaitCapture();
     return res.json({ message: 'Sent.', response });
   } catch (err) {
     logLine(`Send error: ${err.message}`);
@@ -283,17 +286,17 @@ app.post('/send', async (req, res) => {
   }
 });
 
-// Convenience: VSW HomeKit test route
-//   GET /test/vsw?m=2&s=1&b=3&state=1&waitMs=1000
-//   POST /test/vsw { m:2, s:1, b:3, state:1, waitMs:1000 }
+// Convenience: VSW test route
+//   GET /test/vsw?m=2&s=20&b=7&state=1&waitMs=800
+//   POST /test/vsw { m,s,b,state,waitMs }
 app.get('/test/vsw', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
     const m = parseInt(req.query.m, 10) || 2;
-    const s = parseInt(req.query.s, 10) || 1;
-    const b = parseInt(req.query.b, 10) || 3;
+    const s = parseInt(req.query.s, 10) || 20;
+    const b = parseInt(req.query.b, 10) || 7;
     const state = (req.query.state != null) ? String(req.query.state) : '1';
-    const waitMs = Number(req.query.waitMs || 1000);
+    const waitMs = Number(req.query.waitMs || 800);
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
 
     const startLen = RECV_BUFFER.length;
@@ -317,10 +320,10 @@ app.post('/test/vsw', async (req, res) => {
     if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
     const body = req.body || {};
     const m = parseInt(body.m, 10) || 2;
-    const s = parseInt(body.s, 10) || 1;
-    const b = parseInt(body.b, 10) || 3;
+    const s = parseInt(body.s, 10) || 20;
+    const b = parseInt(body.b, 10) || 7;
     const state = (body.state != null) ? String(body.state) : '1';
-    const waitMs = Number(body.waitMs || 1000);
+    const waitMs = Number(body.waitMs || 800);
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
 
     const startLen = RECV_BUFFER.length;
@@ -336,6 +339,46 @@ app.post('/test/vsw', async (req, res) => {
   } catch (err) {
     logLine(`VSW test error: ${err.message}`);
     return res.status(500).json({ ok:false, message: 'VSW test failed.' });
+  }
+});
+
+// Status: VGS (switch only)
+//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&format=raw]
+//   - Sends "VGS m s b" and returns 0/1, or empty if unprogrammed (no reply)
+//   - format=raw -> text/plain "0" or "1" (empty string if none)
+app.get('/status/vgs', async (req, res) => {
+  try {
+    if (!tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    const m = parseInt(req.query.m, 10);
+    const s = parseInt(req.query.s, 10);
+    const b = parseInt(req.query.b, 10);
+    if (!Number.isFinite(m) || !Number.isFinite(s) || !Number.isFinite(b)) {
+      return res.status(400).json({ ok:false, message: 'Missing or invalid m/s/b.' });
+    }
+
+    const quietMs = Number(req.query.quietMs || 200);
+    const maxMs = Number(req.query.maxMs || 1200);
+    const cmd = `VGS ${m} ${s} ${b}`;
+
+    const startLen = RECV_BUFFER.length;
+    await sendToTCP(cmd + NL);
+    const buf = await waitQuiet(startLen, quietMs, maxMs);
+    const raw = buf.toString('utf8').trim();
+
+    // Parse first 0/1 we find
+    const m01 = raw.match(/\b([01])\b/);
+    const value = m01 ? m01[1] : '';
+
+    const isRaw = String(req.query.format || '').toLowerCase() === 'raw' || String(req.query.raw || '') === '1';
+    if (isRaw) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(200).send(value); // '' if none
+    }
+
+    return res.json({ ok:true, sent: cmd, state: (value === '' ? null : Number(value)), raw, bytes: buf.length });
+  } catch (err) {
+    logLine(`VGS status error: ${err.message}`);
+    return res.status(500).json({ ok:false, message: 'VGS status failed.' });
   }
 });
 
