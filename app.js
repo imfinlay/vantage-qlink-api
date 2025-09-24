@@ -1,16 +1,17 @@
 'use strict';
 
-// ==============================================
-// app.js (VGS status endpoint + existing routes)
+// =========================================================
+// app.js (VGS status + API logging)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
 // - /logs      : tail the app log
 // - /recv      : expose recent TCP bytes (utf8/hex/base64)
-// - /test/vsw  : convenience route to press/release VSW
+// - /test/vsw  : press/release a VSW (for HomeKit etc.)
 // - /status/vgs: poll a switch state with VGS <m> <s> <b>
 //   Returns JSON or plain 0/1 when format=raw
-// ==============================================
+// - NEW: API commands are logged (CMD/API -> ...)
+// =========================================================
 
 const path = require('path');
 const fs = require('fs');
@@ -159,6 +160,12 @@ function sendToTCP(data) {
   });
 }
 
+// Log API commands before sending
+function sendCmdLogged(cmd) {
+  try { logLine(`CMD/API -> ${cmd}`); } catch (_) {}
+  return sendToTCP(cmd + NL);
+}
+
 function tailFile(filePath, maxLines) {
   if (!fs.existsSync(filePath)) return [];
   try {
@@ -254,7 +261,7 @@ app.post('/send', async (req, res) => {
         return res.status(400).json({ message: 'Invalid command.' });
       }
       payload = cmd + NL;
-      logLine(`CMD -> ${cmd}`);
+      logLine(`CMD -> ${cmd}`); // UI/clients via /send
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
       logLine(`DATA -> ${String(data).slice(0, 200)}${String(data).length > 200 ? '…' : ''}`);
@@ -300,7 +307,7 @@ app.get('/test/vsw', async (req, res) => {
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
 
     const startLen = RECV_BUFFER.length;
-    await sendToTCP(cmd + NL);
+    await sendCmdLogged(cmd);
 
     let response = null;
     if (waitMs > 0) {
@@ -327,7 +334,7 @@ app.post('/test/vsw', async (req, res) => {
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
 
     const startLen = RECV_BUFFER.length;
-    await sendToTCP(cmd + NL);
+    await sendCmdLogged(cmd);
 
     let response = null;
     if (waitMs > 0) {
@@ -361,7 +368,7 @@ app.get('/status/vgs', async (req, res) => {
     const cmd = `VGS ${m} ${s} ${b}`;
 
     const startLen = RECV_BUFFER.length;
-    await sendToTCP(cmd + NL);
+    await sendCmdLogged(cmd);
     const buf = await waitQuiet(startLen, quietMs, maxMs);
     const raw = buf.toString('utf8').trim();
 
