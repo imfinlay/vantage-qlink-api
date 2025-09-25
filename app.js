@@ -1,7 +1,7 @@
 'use strict';
 
 // =========================================================
-// app.js (queued VGS + cache + HTTP poll logging)
+// app.js (VGS bool format + queue/cache)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
@@ -9,9 +9,12 @@
 // - /recv      : expose recent TCP bytes (utf8/hex/base64)
 // - /test/vsw  : press/release a VSW (for HomeKit etc.)
 // - /status/vgs: poll a switch state with VGS <m> <s> <b>
-//   Returns JSON or plain 0/1 when format=raw
+//   Formats:
+//     * format=raw  -> text/plain "0" or "1" (empty if unknown)
+//     * format=bool -> text/plain "true" or "false" (empty if unknown)
+//     * (default)   -> JSON { ok, sent, state, raw, bytes }
 // - Logs API-originated commands and HTTP polling attempts
-// - NEW: Serialize TCP I/O to prevent mixed replies + short cache for VGS
+// - Serializes TCP I/O to prevent mixed replies + short cache for VGS
 // =========================================================
 
 const path = require('path');
@@ -216,7 +219,7 @@ async function waitQuiet(startLen, quietMs, maxMs) {
 }
 
 // -------------------------------
-// ** NEW **: Serialize TCP sends + short cache for VGS
+// ** Serialize TCP sends + short cache for VGS **
 // -------------------------------
 let tcpQueue = Promise.resolve();
 function runInTcpQueue(task) {
@@ -382,9 +385,11 @@ app.post('/test/vsw', async (req, res) => {
 });
 
 // Status: VGS (switch only)
-//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&format=raw]
-//   - Sends "VGS m s b" and returns 0/1, or empty if unprogrammed (no reply)
-//   - format=raw -> text/plain "0" or "1" (empty string if none)
+//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&format=raw|bool]
+//   - Sends "VGS m s b" and returns state
+//   - format=raw  -> text/plain "0" or "1" (empty if none)
+//   - format=bool -> text/plain "true" or "false" (empty if none)
+//   - default JSON -> { ok, sent, state, raw, bytes }
 app.get('/status/vgs', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VGS poll while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
@@ -404,12 +409,17 @@ app.get('/status/vgs', async (req, res) => {
     const key = vgsKey(m, s, b);
     const now = Date.now();
     const cached = VGS_CACHE.get(key);
+    const fmt = String(req.query.format || '').toLowerCase();
+
     if (cached && (now - cached.ts) < MIN_POLL_INTERVAL_MS) {
       // Very fresh cached value: answer immediately
-      const isRaw = String(req.query.format || '').toLowerCase() === 'raw' || String(req.query.raw || '') === '1';
-      if (isRaw) {
+      if (fmt === 'raw') {
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         return res.status(200).send(cached.value == null ? '' : String(cached.value));
+      }
+      if (fmt === 'bool') {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.status(200).send(cached.value == null ? '' : (cached.value ? 'true' : 'false'));
       }
       return res.json({ ok:true, sent: `(cached) ${cmd}`, state: cached.value, raw: cached.raw, bytes: cached.bytes, cached: true });
     }
@@ -428,10 +438,13 @@ app.get('/status/vgs', async (req, res) => {
     // Cache it
     VGS_CACHE.set(key, { ts: now, value, raw, bytes: buf.length });
 
-    const isRaw = String(req.query.format || '').toLowerCase() === 'raw' || String(req.query.raw || '') === '1';
-    if (isRaw) {
+    if (fmt === 'raw') {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.status(200).send(value == null ? '' : String(value));
+    }
+    if (fmt === 'bool') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(200).send(value == null ? '' : (value ? 'true' : 'false'));
     }
 
     return res.json({ ok:true, sent: cmd, state: value, raw, bytes: buf.length });
