@@ -185,8 +185,7 @@
       const lines = await fetchLogs(limit);
       const box = document.getElementById('log-container');
       const auto = document.getElementById('auto-scroll').checked;
-      box.textContent = lines.join('
-');
+      box.textContent = lines.join(' ');
       if (auto) box.scrollTop = box.scrollHeight;
       document.getElementById('log-count').textContent = '(' + lines.length + ' lines)';
     }
