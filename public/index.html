@@ -19,47 +19,33 @@
     th { border-bottom: 1px solid #ddd; }
     .muted { color:#666; font-size: 0.9em; }
     input[type="number"] { width: 7ch; }
+    code { background:#f4f4f4; padding:2px 4px; border-radius:4px; }
   </style>
   <script>
-    // ==============================
-    // API helpers (robust & cache-busting)
-    // ==============================
+    // ===== API helpers =====
     async function fetchServers() {
       const res = await fetch('/servers', { cache: 'no-store' });
       const data = await res.json();
-      // Accept [{...}] or { servers: [...] }
-      if (Array.isArray(data)) return data;
-      if (data && Array.isArray(data.servers)) return data.servers;
-      return [];
+      return Array.isArray(data) ? data : (Array.isArray(data.servers) ? data.servers : []);
     }
     async function fetchCommands() {
       const res = await fetch('/commands', { cache: 'no-store' });
       const data = await res.json();
-      // Prefer rich shape
-      if (data && Array.isArray(data.items) && data.items.length) return data.items;
-      // Fallback to legacy string list
-      var cmds = (data && Array.isArray(data.commands)) ? data.commands : [];
+      if (data && Array.isArray(data.items) && data.items.length) return data.items; // rich shape
+      const cmds = (data && Array.isArray(data.commands)) ? data.commands : [];      // fallback
       return cmds.map(function(c){ return { command: c, params: '', description: '' }; });
     }
-    async function fetchLogs(limit) {
-      var n = parseInt(limit, 10); if (!Number.isFinite(n) || n <= 0) n = 200;
-      const res = await fetch('/logs?limit=' + encodeURIComponent(n), { cache: 'no-store' });
+    async function fetchLogs(limit = 200) {
+      const res = await fetch(`/logs?limit=${encodeURIComponent(limit)}`, { cache: 'no-store' });
       const data = await res.json();
-      if (Array.isArray(data)) return data;
-      if (data && Array.isArray(data.lines)) return data.lines;
-      return [];
+      return Array.isArray(data) ? data : (Array.isArray(data.lines) ? data.lines : []);
     }
-    async function fetchRecv(limitBytes, encoding) {
-      var n = parseInt(limitBytes, 10); if (!Number.isFinite(n) || n <= 0) n = 2048;
-      var enc = encoding || 'utf8';
-      const res = await fetch('/recv?limitBytes=' + encodeURIComponent(n) + '&encoding=' + encodeURIComponent(enc), { cache: 'no-store' });
+    async function fetchRecv(limitBytes = 2048, encoding = 'utf8') {
+      const res = await fetch(`/recv?limitBytes=${encodeURIComponent(limitBytes)}&encoding=${encodeURIComponent(encoding)}`, { cache: 'no-store' });
       return res.json(); // { length, encoding, data }
     }
     async function connectToServer(serverIndex) {
-      const res = await fetch('/connect', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverIndex: serverIndex })
-      });
+      const res = await fetch('/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverIndex }) });
       return res.json();
     }
     async function disconnect() {
@@ -67,12 +53,9 @@
       return res.json();
     }
     async function sendCommand(message, waitMs) {
-      var body = { command: message };
+      const body = { command: message };
       if (typeof waitMs === 'number' && waitMs > 0) body.waitMs = waitMs;
-      const res = await fetch('/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      const res = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       return res.json(); // { message, response? }
     }
     async function fetchStatus() {
@@ -80,9 +63,7 @@
       return res.json();
     }
 
-    // ==============================
-    // UI helpers
-    // ==============================
+    // ===== UI helpers =====
     function populateServers(servers) {
       const select = document.getElementById('server-select');
       select.innerHTML = '';
@@ -102,9 +83,9 @@
 
     function setStatusText(connectedObj) {
       const el = document.getElementById('status');
-      var connected = connectedObj && !!connectedObj.connected;
+      const connected = connectedObj && !!connectedObj.connected;
       var svr = (connectedObj && connectedObj.server) ? connectedObj.server : {};
-      var label = svr.name || svr.host || '';
+      const label = svr.name || svr.host || '';
       el.textContent = connected ? ('Connected to ' + label) : 'Not connected';
     }
 
@@ -126,14 +107,18 @@
       const input = document.getElementById('command-input');
       const modifier = getSelectedModifier();
       const message = input.value + (modifier || '');
+
       var waitMs = 0;
-      var chk = document.getElementById('wait-enable');
+      const chk = document.getElementById('wait-enable');
       if (chk && chk.checked) {
         waitMs = parseInt(document.getElementById('wait-ms').value, 10) || 0;
       }
+
       const result = await sendCommand(message, waitMs);
       document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      var respBox = document.getElementById('latest-response');
+
+      // Show immediate response (if any)
+      const respBox = document.getElementById('latest-response');
       if (result && result.response && typeof result.response.text === 'string') {
         respBox.textContent = result.response.text;
       } else {
@@ -141,9 +126,7 @@
       }
     }
 
-    // ==============================
-    // Commands table (searchable)
-    // ==============================
+    // ===== Commands: searchable table =====
     var __allCommands = [];
 
     function renderCommandsTable(rows) {
@@ -157,11 +140,11 @@
         tr.appendChild(td); tbody.appendChild(tr); return;
       }
       rows.forEach(function(row){
-        var command = row.command || '', params = row.params || '', description = row.description || '';
+        const command = row.command, params = row.params, description = row.description;
         const tr = document.createElement('tr');
         [command, params, description].forEach(function(text){
           const td = document.createElement('td');
-          td.textContent = text; td.style.padding = '6px';
+          td.textContent = text || ''; td.style.padding = '6px';
           tr.appendChild(td);
         });
         tr.style.cursor = 'pointer';
@@ -178,8 +161,8 @@
       const q = (document.getElementById('cmd-filter').value || '').toLowerCase();
       if (!q) return renderCommandsTable(__allCommands);
       const filtered = __allCommands.filter(function(row){
-        var c = row.command || '', p = row.params || '', d = row.description || '';
-        return c.toLowerCase().includes(q) || p.toLowerCase().includes(q) || d.toLowerCase().includes(q);
+        const command = row.command || '', params = row.params || '', description = row.description || '';
+        return command.toLowerCase().includes(q) || params.toLowerCase().includes(q) || description.toLowerCase().includes(q);
       });
       renderCommandsTable(filtered);
     }
@@ -194,9 +177,7 @@
       }
     }
 
-    // ==============================
-    // Logs live tail
-    // ==============================
+    // ===== Logs live tail =====
     var logTimer = null;
     function stopLogTail() { if (logTimer) { clearInterval(logTimer); logTimer = null; } document.getElementById('tail-toggle').textContent = 'Start Tail'; }
     async function doLogFetchOnce() {
@@ -218,9 +199,7 @@
     function toggleTail() { if (logTimer) { stopLogTail(); } else { startLogTail(); } }
     function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
 
-    // ==============================
-    // Responses live tail (/recv)
-    // ==============================
+    // ===== RECV live tail =====
     var recvTimer = null;
     function stopRecvTail() { if (recvTimer) { clearInterval(recvTimer); recvTimer = null; } document.getElementById('recv-toggle').textContent = 'Start Tail'; }
     async function doRecvFetchOnce() {
@@ -229,9 +208,9 @@
       const res = await fetchRecv(limit, enc);
       const box = document.getElementById('recv-container');
       const auto = document.getElementById('recv-auto').checked;
-      box.textContent = (res && res.data) ? res.data : '';
+      box.textContent = res && res.data ? res.data : '';
       if (auto) box.scrollTop = box.scrollHeight;
-      document.getElementById('recv-count').textContent = '(' + (res && res.length ? res.length : 0) + ' bytes)';
+      document.getElementById('recv-count').textContent = '(' + (res.length || 0) + ' bytes)';
     }
     function startRecvTail() {
       const intervalMs = parseInt(document.getElementById('recv-interval').value, 10) || 2000;
@@ -242,16 +221,14 @@
     function toggleRecv() { if (recvTimer) { stopRecvTail(); } else { startRecvTail(); } }
     function clearRecvView() { document.getElementById('recv-container').textContent = ''; document.getElementById('recv-count').textContent = ''; }
 
-    // ==============================
-    // Init
-    // ==============================
+    // ===== Init =====
     async function initialize() {
       try {
         const servers = await fetchServers();
         populateServers(servers);
         const status = await fetchStatus(); setStatusText(status);
         await refreshCommandsUI(); startLogTail(); startRecvTail();
-        var f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
+        const f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
       } catch (e) { console.error('Initialization error:', e); }
     }
     document.addEventListener('DOMContentLoaded', initialize);
