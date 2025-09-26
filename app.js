@@ -352,15 +352,26 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
 
-    const startLen = RECV_BUFFER.length;
-    await runQueued(() => sendToTCP(payload), { priority: 0, label: 'RAWsend' });
-
-    let buf = Buffer.alloc(0);
-    if (quietMs > 0) {
-      buf = await waitQuiet(startLen, quietMs, maxMs);
-    } else if (waitMs > 0) {
-      await sleep(waitMs); buf = RECV_BUFFER.slice(startLen);
-    }
+	// Run send + wait INSIDE the queue so nothing else interleaves
+	const uiPriority = 5; // higher than status polls (0), lower than control bursts (10)
+	const buf = await runQueued(async () => {
+	  const startLen = RECV_BUFFER.length;
+	
+	  if (typeof command === 'string' && command.trim()) {
+		// log + append NL like before
+		await sendCmdLogged(command.trim());
+	  } else {
+		await sendToTCP(payload);
+	  }
+	
+	  if (quietMs > 0) {
+		return await waitQuiet(startLen, quietMs, maxMs);
+	  } else if (waitMs > 0) {
+		await sleep(waitMs);
+		return RECV_BUFFER.slice(startLen);
+	  }
+	  return Buffer.alloc(0);
+	}, { priority: uiPriority, label: 'UI/send' });
 
     const response = (waitMs > 0 || quietMs > 0) ? {
       bytes: buf.length,
