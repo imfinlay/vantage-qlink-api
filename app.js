@@ -1,7 +1,7 @@
 'use strict';
 
 // =========================================================
-// app.js (VGS bool format + queue/cache)
+// app.js (Queued send + VGS coalesce/cache + priority + jitter)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
@@ -12,9 +12,10 @@
 //   Formats:
 //     * format=raw  -> text/plain "0" or "1" (empty if unknown)
 //     * format=bool -> text/plain "true" or "false" (empty if unknown)
-//     * (default)   -> JSON { ok, sent, state, raw, bytes }
+//     * (default)   -> JSON { ok, sent, state, raw, bytes, cached? }
 // - Logs API-originated commands and HTTP polling attempts
-// - Serializes TCP I/O to prevent mixed replies + short cache for VGS
+// - Serializes TCP I/O to prevent mixed replies + short cache & coalescing for VGS
+// - NEW: Global min inter-command gap (MIN_GAP_MS), priority queue, jitter, cacheMs param
 // =========================================================
 
 const path = require('path');
@@ -29,8 +30,11 @@ const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
 const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n';
 const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; // allow CR-only via config
+
 // Short cache window to avoid hammering the controller with back-to-back polls
-const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || 400);
+const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
+// NEW: global minimum spacing between *any* on-wire sends (in ms)
+const MIN_GAP_MS = Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120);
 
 try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
@@ -219,17 +223,63 @@ async function waitQuiet(startLen, quietMs, maxMs) {
 }
 
 // -------------------------------
-// ** Serialize TCP sends + short cache for VGS **
+// ** NEW: Priority queue for on-wire sends + global min gap **
 // -------------------------------
-let tcpQueue = Promise.resolve();
-function runInTcpQueue(task) {
-  const run = () => Promise.resolve().then(task);
-  const p = tcpQueue.then(run, run);
-  tcpQueue = p.catch(() => {}); // keep chain alive on errors
-  return p;
+let __queue = []; // items: { fn, priority, resolve, reject, label, enqueuedAt }
+let __pumping = false;
+let __lastSendAt = 0;
+
+function runQueued(taskFn, { priority = 0, label = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const item = { fn: taskFn, priority, resolve, reject, label, enqueuedAt: Date.now() };
+    // stable priority insert (higher priority first)
+    const idx = __queue.findIndex(x => (x.priority || 0) < priority);
+    if (idx === -1) __queue.push(item); else __queue.splice(idx, 0, item);
+    pumpQueue();
+  });
 }
 
-const VGS_CACHE = new Map();
+async function pumpQueue(){
+  if (__pumping) return;
+  __pumping = true;
+  try {
+    while (__queue.length) {
+      const item = __queue.shift();
+      const now = Date.now();
+      const gap = Math.max(0, MIN_GAP_MS - (now - __lastSendAt));
+      if (gap > 0) await sleep(gap);
+      try {
+        const r = await item.fn();
+        __lastSendAt = Date.now();
+        item.resolve(r);
+      } catch (e) {
+        item.reject(e);
+      }
+    }
+  } finally {
+    __pumping = false;
+  }
+}
+
+// Back-compat wrapper: preserves any existing calls to runInTcpQueue
+function runInTcpQueue(task) {
+  return runQueued(task, { priority: 0 });
+}
+
+// Helper: send + collect using quietMs/maxMs inside the queue
+function sendAndCollect(cmd, { quietMs = 200, maxMs = 1200, priority = 0 } = {}) {
+  return runQueued(async () => {
+    const startLen = RECV_BUFFER.length;
+    await sendCmdLogged(cmd);
+    return await waitQuiet(startLen, quietMs, maxMs);
+  }, { priority, label: cmd });
+}
+
+// -------------------------------
+// ** VGS cache + in-flight coalescing **
+// -------------------------------
+const VGS_CACHE = new Map(); // key -> { ts, value, raw, bytes }
+const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
 // -------------------------------
@@ -303,7 +353,7 @@ app.post('/send', async (req, res) => {
     }
 
     const startLen = RECV_BUFFER.length;
-    await sendToTCP(payload);
+    await runQueued(() => sendToTCP(payload), { priority: 0, label: 'RAWsend' });
 
     let buf = Buffer.alloc(0);
     if (quietMs > 0) {
@@ -341,12 +391,12 @@ app.get('/test/vsw', async (req, res) => {
 
     logHttp(req, cmd);
 
-    const buf = await runInTcpQueue(async () => {
+    const buf = await runQueued(async () => {
       const startLen = RECV_BUFFER.length;
       await sendCmdLogged(cmd);
       if (waitMs > 0) { await sleep(waitMs); return RECV_BUFFER.slice(startLen); }
       return Buffer.alloc(0);
-    });
+    }, { priority: 10, label: cmd }); // priority: controls > polls
 
     const response = (waitMs > 0) ? { bytes: buf.length, text: buf.toString('utf8') } : null;
     return res.json({ ok:true, sent: cmd, response });
@@ -369,12 +419,12 @@ app.post('/test/vsw', async (req, res) => {
 
     logHttp(req, cmd);
 
-    const buf = await runInTcpQueue(async () => {
+    const buf = await runQueued(async () => {
       const startLen = RECV_BUFFER.length;
       await sendCmdLogged(cmd);
       if (waitMs > 0) { await sleep(waitMs); return RECV_BUFFER.slice(startLen); }
       return Buffer.alloc(0);
-    });
+    }, { priority: 10, label: cmd });
 
     const response = (waitMs > 0) ? { bytes: buf.length, text: buf.toString('utf8') } : null;
     return res.json({ ok:true, sent: cmd, response });
@@ -385,11 +435,11 @@ app.post('/test/vsw', async (req, res) => {
 });
 
 // Status: VGS (switch only)
-//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&format=raw|bool]
+//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&cacheMs=750&jitterMs=300][&format=raw|bool]
 //   - Sends "VGS m s b" and returns state
 //   - format=raw  -> text/plain "0" or "1" (empty if none)
 //   - format=bool -> text/plain "true" or "false" (empty if none)
-//   - default JSON -> { ok, sent, state, raw, bytes }
+//   - default JSON -> { ok, sent, state, raw, bytes, cached? }
 app.get('/status/vgs', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VGS poll while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
@@ -403,51 +453,53 @@ app.get('/status/vgs', async (req, res) => {
     const cmd = `VGS ${m} ${s} ${b}`;
     logHttp(req, cmd);
 
-    const quietMs = Number(req.query.quietMs || 200);
-    const maxMs = Number(req.query.maxMs || 1200);
+    const quietMs  = Number(req.query.quietMs || 200);
+    const maxMs    = Number(req.query.maxMs   || 1200);
+    const cacheMs  = Math.max(0, Number(req.query.cacheMs || MIN_POLL_INTERVAL_MS));
+    const jitterMs = Math.max(0, Number(req.query.jitterMs || 0));
 
     const key = vgsKey(m, s, b);
     const now = Date.now();
-    const cached = VGS_CACHE.get(key);
     const fmt = String(req.query.format || '').toLowerCase();
 
-    if (cached && (now - cached.ts) < MIN_POLL_INTERVAL_MS) {
-      // Very fresh cached value: answer immediately
-      if (fmt === 'raw') {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return res.status(200).send(cached.value == null ? '' : String(cached.value));
-      }
-      if (fmt === 'bool') {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return res.status(200).send(cached.value == null ? '' : (cached.value ? 'true' : 'false'));
-      }
-      return res.json({ ok:true, sent: `(cached) ${cmd}`, state: cached.value, raw: cached.raw, bytes: cached.bytes, cached: true });
+    // Serve fresh cache immediately
+    const cached = VGS_CACHE.get(key);
+    if (cached && (now - cached.ts) < cacheMs) {
+      const value = cached.value;
+      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
+      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
+      return res.json({ ok:true, sent: `(cached) ${cmd}`, state: value, raw: cached.raw, bytes: cached.bytes, cached: true });
     }
 
-    // Serialize on-wire exchange so replies cannot interleave
-    const buf = await runInTcpQueue(async () => {
-      const startLen = RECV_BUFFER.length;
-      await sendCmdLogged(cmd);
-      return await waitQuiet(startLen, quietMs, maxMs);
-    });
-
-    const raw = buf.toString('utf8').trim();
-    const m01 = raw.match(/\b([01])\b/);
-    const value = m01 ? Number(m01[1]) : null;
-
-    // Cache it
-    VGS_CACHE.set(key, { ts: now, value, raw, bytes: buf.length });
-
-    if (fmt === 'raw') {
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.status(200).send(value == null ? '' : String(value));
-    }
-    if (fmt === 'bool') {
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.status(200).send(value == null ? '' : (value ? 'true' : 'false'));
+    // Coalesce concurrent identical VGS polls
+    if (VGS_INFLIGHT.has(key)) {
+      const infl = await VGS_INFLIGHT.get(key);
+      const value = infl.value;
+      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
+      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
+      return res.json({ ok:true, sent: `(coalesced) ${cmd}`, state: value, raw: infl.raw, bytes: infl.bytes, cached: false });
     }
 
-    return res.json({ ok:true, sent: cmd, state: value, raw, bytes: buf.length });
+    // Start a new on-wire poll with optional jitter and queue spacing
+    const p = (async () => {
+      if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
+      const buf = await sendAndCollect(cmd, { quietMs, maxMs, priority: 0 });
+      const raw = buf.toString('utf8').trim();
+      const m01 = raw.match(/\b([01])\b/);
+      const value = m01 ? Number(m01[1]) : null;
+      const rec = { ts: Date.now(), value, raw, bytes: buf.length };
+      VGS_CACHE.set(key, rec);
+      return { value, raw, bytes: buf.length };
+    })();
+
+    VGS_INFLIGHT.set(key, p);
+    let out;
+    try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
+
+    if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : String(out.value)); }
+    if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : (out.value ? 'true' : 'false')); }
+
+    return res.json({ ok:true, sent: cmd, state: out.value, raw: out.raw, bytes: out.bytes });
   } catch (err) {
     logLine(`VGS status error: ${err.message}`);
     return res.status(500).json({ ok:false, message: 'VGS status failed.' });
