@@ -240,21 +240,48 @@
     } catch (e) { showError(e); }
   }
 
-  // ---------- Send ----------
-  async function sendCmd() {
+ async function sendCmd() {
     try {
-      const cmd = $('cmdInput').value.trim();
+      const cmd = document.getElementById('cmdInput').value.trim();
       if (!cmd) throw new Error('Enter a command');
-      const quietMs = Math.max(0, parseInt($('quietMs').value,10) || 0);
-      const maxMs   = Math.max(100, parseInt($('maxMs').value,10) || 2000);
+
+      const quietMs = Math.max(0, parseInt(document.getElementById('quietMs').value, 10) || 0);
+      const maxMs   = Math.max(100, parseInt(document.getElementById('maxMs').value, 10) || 2000);
 
       const r = await api('/send', {
-        method:'POST',
-        headers:{'content-type':'application/json'},
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ command: cmd, quietMs, maxMs })
       });
-      sendResp.textContent = JSON.stringify(r, null, 2);
-    } catch (e) { showError(e); }
+
+      // Prefer the collected text (what the controller replied)
+      const box = document.getElementById('sendResp');
+      let out = '';
+
+      if (r && r.response) {
+        if (typeof r.response.text === 'string') {
+          out = r.response.text.replace(/\r\n/g, '\n').trim();
+          if (!out && r.response.bytes > 0) {
+            out = `[${r.response.bytes} bytes received, but no UTF-8 text]`;
+          }
+        } else if (typeof r.response.hex === 'string' && r.response.hex.length) {
+          out = `(hex) ${r.response.hex}`;
+        } else {
+          out = 'OK (no printable text)';
+        }
+      } else {
+        // No response collected means no quietMs/waitMs was used
+        out = 'Sent. (No response collected — set quietMs or waitMs to capture reply)';
+      }
+
+      box.textContent = out;
+
+      // keep the full object in console for debugging
+      console.debug('[send] full response:', r);
+    } catch (e) {
+      console.error(e);
+      document.getElementById('sendResp').textContent = String(e && e.message || e);
+    }
   }
 
   // ---------- Logs ----------
