@@ -1,346 +1,351 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Vantage QLink API — Console</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TCP Command Console</title>
   <style>
-    :root { --bg:#0b0f14; --panel:#121822; --muted:#9fb0c3; --text:#e6eef7; --accent:#3aa0ff; --ok:#23d18b; --warn:#ffcc00; --err:#ff4d4d; }
-    body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; background:var(--bg); color:var(--text); }
-    header { padding:14px 16px; background:#0e141d; border-bottom:1px solid #1b2636; position:sticky; top:0; z-index:10; }
-    h1 { margin:0; font-size:16px; letter-spacing:.2px; }
-    .wrap { display:grid; grid-template-columns: 360px 1fr; gap:12px; padding:12px; }
-    .panel { background:var(--panel); border:1px solid #1b2636; border-radius:10px; padding:12px; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    label { color:var(--muted); font-size:12px; }
-    select, input[type="text"], input[type="number"] { background:#0e141d; color:var(--text); border:1px solid #1b2636; border-radius:8px; padding:8px; outline:none; }
-    button { background:var(--accent); color:#00172a; border:0; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer; }
-    button.secondary { background:#1c2736; color:var(--text); }
-    button:disabled { opacity:.5; cursor:not-allowed; }
-    pre { margin:0; background:#0c121a; border:1px solid #1b2636; border-radius:8px; padding:10px; max-height:40vh; overflow:auto; white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    table { width:100%; border-collapse:separate; border-spacing:0; }
-    th, td { text-align:left; padding:8px; border-bottom:1px solid #1b2636; vertical-align:top; }
-    th { position:sticky; top:0; background:#111826; z-index:1; }
-    .tag { font-size:11px; color:#9fb0c3; border:1px solid #263242; padding:2px 6px; border-radius:999px; }
-    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
-    .ok { background:var(--ok); } .err { background:var(--err); } .warn { background:var(--warn); }
-    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-    .muted { color:var(--muted); }
-    .small { font-size:12px; color:var(--muted); }
-    .right { text-align:right; }
-    .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin:8px 0; }
-    .ghost { opacity:.8; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 16px; }
+    h1 { margin: 0 0 8px; }
+    h2 { margin: 20px 0 8px; font-size: 1.1rem; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
+    .btn { cursor: pointer; padding: 6px 10px; border: 1px solid #888; border-radius: 6px; background:#fafafa; }
+    .btn:hover { background:#f0f0f0; }
+    #output, #latest-response { white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd; border-radius: 6px; }
+    #log-container, #recv-container { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; background:#0b0b0b; color:#d7d7d7; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #f0f0f0; padding: 6px; vertical-align: top; }
+    th { border-bottom: 1px solid #ddd; }
+    .muted { color:#666; font-size: 0.9em; }
+    input[type="number"] { width: 7ch; }
   </style>
+  <script>
+    // ==============================
+    // API helpers (robust & cache-busting)
+    // ==============================
+    async function fetchServers() {
+      const res = await fetch('/servers', { cache: 'no-store' });
+      const data = await res.json();
+      // Accept [{...}] or { servers: [...] }
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.servers)) return data.servers;
+      return [];
+    }
+    async function fetchCommands() {
+      const res = await fetch('/commands', { cache: 'no-store' });
+      const data = await res.json();
+      // Prefer rich shape
+      if (data && Array.isArray(data.items) && data.items.length) return data.items;
+      // Fallback to legacy string list
+      var cmds = (data && Array.isArray(data.commands)) ? data.commands : [];
+      return cmds.map(function(c){ return { command: c, params: '', description: '' }; });
+    }
+    async function fetchLogs(limit) {
+      var n = parseInt(limit, 10); if (!Number.isFinite(n) || n <= 0) n = 200;
+      const res = await fetch('/logs?limit=' + encodeURIComponent(n), { cache: 'no-store' });
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+      if (data && Array.isArray(data.lines)) return data.lines;
+      return [];
+    }
+    async function fetchRecv(limitBytes, encoding) {
+      var n = parseInt(limitBytes, 10); if (!Number.isFinite(n) || n <= 0) n = 2048;
+      var enc = encoding || 'utf8';
+      const res = await fetch('/recv?limitBytes=' + encodeURIComponent(n) + '&encoding=' + encodeURIComponent(enc), { cache: 'no-store' });
+      return res.json(); // { length, encoding, data }
+    }
+    async function connectToServer(serverIndex) {
+      const res = await fetch('/connect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverIndex: serverIndex })
+      });
+      return res.json();
+    }
+    async function disconnect() {
+      const res = await fetch('/disconnect', { method: 'POST' });
+      return res.json();
+    }
+    async function sendCommand(message, waitMs) {
+      var body = { command: message };
+      if (typeof waitMs === 'number' && waitMs > 0) body.waitMs = waitMs;
+      const res = await fetch('/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return res.json(); // { message, response? }
+    }
+    async function fetchStatus() {
+      const res = await fetch('/status', { cache: 'no-store' });
+      return res.json();
+    }
+
+    // ==============================
+    // UI helpers
+    // ==============================
+    function populateServers(servers) {
+      const select = document.getElementById('server-select');
+      select.innerHTML = '';
+      servers.forEach(function(server, index){
+        const option = document.createElement('option');
+        option.value = index;
+        option.textContent = server.name + ' (' + server.host + ':' + server.port + ')';
+        select.appendChild(option);
+      });
+    }
+
+    function getSelectedModifier() {
+      const radios = document.querySelectorAll('input[name="modifier"]');
+      for (var i=0; i<radios.length; i++) { if (radios[i].checked) return radios[i].value; }
+      return '';
+    }
+
+    function setStatusText(connectedObj) {
+      const el = document.getElementById('status');
+      var connected = connectedObj && !!connectedObj.connected;
+      var svr = (connectedObj && connectedObj.server) ? connectedObj.server : {};
+      var label = svr.name || svr.host || '';
+      el.textContent = connected ? ('Connected to ' + label) : 'Not connected';
+    }
+
+    async function onConnectClick() {
+      const select = document.getElementById('server-select');
+      const index = parseInt(select.value, 10);
+      const result = await connectToServer(index);
+      document.getElementById('output').textContent = result.message || JSON.stringify(result);
+      const status = await fetchStatus(); setStatusText(status);
+    }
+
+    async function onDisconnectClick() {
+      const result = await disconnect();
+      document.getElementById('output').textContent = result.message || JSON.stringify(result);
+      const status = await fetchStatus(); setStatusText(status);
+    }
+
+    async function onSendClick() {
+      const input = document.getElementById('command-input');
+      const modifier = getSelectedModifier();
+      const message = input.value + (modifier || '');
+      var waitMs = 0;
+      var chk = document.getElementById('wait-enable');
+      if (chk && chk.checked) {
+        waitMs = parseInt(document.getElementById('wait-ms').value, 10) || 0;
+      }
+      const result = await sendCommand(message, waitMs);
+      document.getElementById('output').textContent = result.message || JSON.stringify(result);
+      var respBox = document.getElementById('latest-response');
+      if (result && result.response && typeof result.response.text === 'string') {
+        respBox.textContent = result.response.text;
+      } else {
+        respBox.textContent = '(no response captured)';
+      }
+    }
+
+    // ==============================
+    // Commands table (searchable)
+    // ==============================
+    var __allCommands = [];
+
+    function renderCommandsTable(rows) {
+      const tbody = document.getElementById('commands-tbody');
+      tbody.innerHTML = '';
+      if (!rows.length) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3; td.className = 'muted'; td.style.padding = '8px';
+        td.textContent = 'No commands loaded (check commands.csv)';
+        tr.appendChild(td); tbody.appendChild(tr); return;
+      }
+      rows.forEach(function(row){
+        var command = row.command || '', params = row.params || '', description = row.description || '';
+        const tr = document.createElement('tr');
+        [command, params, description].forEach(function(text){
+          const td = document.createElement('td');
+          td.textContent = text; td.style.padding = '6px';
+          tr.appendChild(td);
+        });
+        tr.style.cursor = 'pointer';
+        tr.title = 'Click to insert the command into the input box';
+        tr.addEventListener('click', function(){
+          const input = document.getElementById('command-input');
+          input.value = command; input.focus();
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    function applyCommandFilter() {
+      const q = (document.getElementById('cmd-filter').value || '').toLowerCase();
+      if (!q) return renderCommandsTable(__allCommands);
+      const filtered = __allCommands.filter(function(row){
+        var c = row.command || '', p = row.params || '', d = row.description || '';
+        return c.toLowerCase().includes(q) || p.toLowerCase().includes(q) || d.toLowerCase().includes(q);
+      });
+      renderCommandsTable(filtered);
+    }
+
+    async function refreshCommandsUI() {
+      try {
+        __allCommands = await fetchCommands();
+        renderCommandsTable(__allCommands);
+      } catch (e) {
+        console.error('Commands load failed:', e);
+        __allCommands = []; renderCommandsTable(__allCommands);
+      }
+    }
+
+    // ==============================
+    // Logs live tail
+    // ==============================
+    var logTimer = null;
+    function stopLogTail() { if (logTimer) { clearInterval(logTimer); logTimer = null; } document.getElementById('tail-toggle').textContent = 'Start Tail'; }
+    async function doLogFetchOnce() {
+      const limit = parseInt(document.getElementById('log-limit').value, 10) || 200;
+      const lines = await fetchLogs(limit);
+      const box = document.getElementById('log-container');
+      const auto = document.getElementById('auto-scroll').checked;
+      box.textContent = lines.join('
+');
+      if (auto) box.scrollTop = box.scrollHeight;
+      document.getElementById('log-count').textContent = '(' + lines.length + ' lines)';
+    }
+    function startLogTail() {
+      const intervalMs = parseInt(document.getElementById('log-interval').value, 10) || 2000;
+      if (logTimer) clearInterval(logTimer);
+      logTimer = setInterval(doLogFetchOnce, intervalMs); doLogFetchOnce();
+      document.getElementById('tail-toggle').textContent = 'Stop Tail';
+    }
+    function toggleTail() { if (logTimer) { stopLogTail(); } else { startLogTail(); } }
+    function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
+
+    // ==============================
+    // Responses live tail (/recv)
+    // ==============================
+    var recvTimer = null;
+    function stopRecvTail() { if (recvTimer) { clearInterval(recvTimer); recvTimer = null; } document.getElementById('recv-toggle').textContent = 'Start Tail'; }
+    async function doRecvFetchOnce() {
+      const limit = parseInt(document.getElementById('recv-limit').value, 10) || 2048;
+      const enc = document.getElementById('recv-enc').value || 'utf8';
+      const res = await fetchRecv(limit, enc);
+      const box = document.getElementById('recv-container');
+      const auto = document.getElementById('recv-auto').checked;
+      box.textContent = (res && res.data) ? res.data : '';
+      if (auto) box.scrollTop = box.scrollHeight;
+      document.getElementById('recv-count').textContent = '(' + (res && res.length ? res.length : 0) + ' bytes)';
+    }
+    function startRecvTail() {
+      const intervalMs = parseInt(document.getElementById('recv-interval').value, 10) || 2000;
+      if (recvTimer) clearInterval(recvTimer);
+      recvTimer = setInterval(doRecvFetchOnce, intervalMs); doRecvFetchOnce();
+      document.getElementById('recv-toggle').textContent = 'Stop Tail';
+    }
+    function toggleRecv() { if (recvTimer) { stopRecvTail(); } else { startRecvTail(); } }
+    function clearRecvView() { document.getElementById('recv-container').textContent = ''; document.getElementById('recv-count').textContent = ''; }
+
+    // ==============================
+    // Init
+    // ==============================
+    async function initialize() {
+      try {
+        const servers = await fetchServers();
+        populateServers(servers);
+        const status = await fetchStatus(); setStatusText(status);
+        await refreshCommandsUI(); startLogTail(); startRecvTail();
+        var f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
+      } catch (e) { console.error('Initialization error:', e); }
+    }
+    document.addEventListener('DOMContentLoaded', initialize);
+  </script>
 </head>
 <body>
-  <header>
-    <h1>Vantage QLink API — Console <span id="statusBadge" class="tag">disconnected</span></h1>
-  </header>
+  <h1>TCP Command Console</h1>
 
-  <div class="wrap">
-    <!-- LEFT: controls -->
-    <div class="panel">
-      <h3>Connection</h3>
-      <div class="row">
-        <label for="serverSelect">Server</label>
-        <select id="serverSelect"></select>
-        <button id="connectBtn">Connect</button>
-        <button id="disconnectBtn" class="secondary">Disconnect</button>
-      </div>
-      <div class="small muted" id="connInfo">—</div>
-
-      <hr style="border:none;border-top:1px solid #1b2636; margin:12px 0;" />
-
-      <h3>Send Command</h3>
-      <div class="row" style="gap:6px;">
-        <input id="cmdInput" type="text" placeholder="e.g. VQM or VSW 2 20 7 1" style="flex:1;" />
-        <button id="sendBtn">Send</button>
-      </div>
-      <div class="grid2">
-        <div>
-          <label>quietMs</label>
-          <input id="quietMs" type="number" min="0" step="50" value="300" style="width:100%;">
-        </div>
-        <div>
-          <label>maxMs</label>
-          <input id="maxMs" type="number" min="100" step="100" value="2000" style="width:100%;">
-        </div>
-      </div>
-      <div class="small muted">Response (last send)</div>
-      <pre id="sendResp" style="max-height:18vh;"></pre>
-    </div>
-
-    <!-- RIGHT: commands + logs -->
-    <div class="panel">
-      <div class="grid2">
-        <div>
-          <h3>Commands</h3>
-          <div class="toolbar">
-            <input id="cmdFilter" type="text" placeholder="Filter commands..." style="flex:1;">
-            <button id="reloadCmds" class="secondary">Reload</button>
-          </div>
-          <div style="max-height:32vh; overflow:auto;">
-            <table id="commandsTable">
-              <thead>
-                <tr><th style="width:22%">Command</th><th>Description</th><th style="width:24%">Params</th></tr>
-              </thead>
-              <tbody id="commandsBody"></tbody>
-            </table>
-          </div>
-          <div class="small muted">Tip: click any command to paste it into the input.</div>
-        </div>
-
-        <div>
-          <h3>Logs <span id="logCount" class="muted small"></span></h3>
-          <div class="toolbar">
-            <div class="row">
-              <label for="logLimit">lines</label>
-              <input id="logLimit" type="number" min="50" max="2000" step="50" value="300" style="width:90px;">
-              <label class="row" style="gap:6px;"><input id="autoScroll" type="checkbox" checked> Auto-scroll</label>
-            </div>
-            <div class="row">
-              <button id="refreshLogs" class="secondary">Refresh</button>
-              <button id="toggleLogs" class="secondary">Pause</button>
-            </div>
-          </div>
-          <pre id="logBox"></pre>
-        </div>
-      </div>
+  <div class="card">
+    <h2>Server</h2>
+    <div class="row">
+      <label for="server-select">Select:</label>
+      <select id="server-select"></select>
+      <button class="btn" id="connect-btn" onclick="onConnectClick()">Connect</button>
+      <button class="btn" id="disconnect-btn" onclick="onDisconnectClick()">Disconnect</button>
+      <span id="status" class="muted">Not connected</span>
     </div>
   </div>
 
-<script>
-(() => {
-  // ---------- Helpers ----------
-  const $ = (id) => document.getElementById(id);
-  const statusBadge = $('statusBadge');
-  const connInfo = $('connInfo');
-  const serverSelect = $('serverSelect');
-  const sendResp = $('sendResp');
-  const logBox = $('logBox');
-  const logCount = $('logCount');
+  <div class="card">
+    <h2>Send Command</h2>
+    <div class="row">
+      <input id="command-input" type="text" placeholder="Enter command" />
+      <div class="row" style="gap: 14px;">
+        <label><input type="radio" name="modifier" value="" checked /> None</label>
+        <label><input type="radio" name="modifier" value="$" /> $ (short)</label>
+        <label><input type="radio" name="modifier" value="#" /> # (detailed)</label>
+      </div>
+      <div class="row" style="gap: 8px;">
+        <label><input id="wait-enable" type="checkbox" /> Wait for response</label>
+        <label>Wait (ms) <input id="wait-ms" type="number" min="0" step="50" value="300" /></label>
+      </div>
+      <button class="btn" id="send-btn" onclick="onSendClick()">Send</button>
+    </div>
+    <div style="margin-top: 8px;">
+      <strong>Output:</strong>
+      <pre id="output"></pre>
+      <strong>Latest Response:</strong> <span class="muted">(from /send)</span>
+      <pre id="latest-response"></pre>
+    </div>
+  </div>
 
-  async function api(path, opts = {}) {
-    const res = await fetch(path, opts);
-    if (!res.ok) {
-      const text = await res.text().catch(()=>'');
-      throw new Error(`${res.status} ${res.statusText} — ${text}`);
-    }
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('application/json')) return res.json();
-    return res.text();
-  }
+  <div class="card">
+    <h2>Commands</h2>
+    <div class="row">
+      <input id="cmd-filter" type="text" placeholder="Filter (command, params, description)" />
+      <button class="btn" onclick="refreshCommandsUI()">Refresh</button>
+      <span class="muted">Click a row to insert the command into the input.</span>
+    </div>
+    <div style="overflow:auto; margin-top:8px;">
+      <table id="commands-table">
+        <thead>
+          <tr>
+            <th>Command</th>
+            <th>Params</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody id="commands-tbody"></tbody>
+      </table>
+    </div>
+  </div>
 
-  function setConnected(connected, server) {
-    statusBadge.textContent = connected ? 'connected' : 'disconnected';
-    statusBadge.className = 'tag ' + (connected ? '' : 'ghost');
-    if (connected && server) connInfo.textContent = `${server.name || ''} ${server.host}:${server.port}`;
-    else connInfo.textContent = '—';
-  }
+  <div class="card">
+    <h2>Logs <span id="log-count" class="muted"></span></h2>
+    <div class="row">
+      <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
+      <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
+      <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
+      <button class="btn" id="tail-toggle" onclick="toggleTail()">Stop Tail</button>
+      <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
+      <button class="btn" onclick="clearLogView()">Clear View</button>
+    </div>
+    <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
+  </div>
 
-  function showError(e) {
-    console.error(e);
-    sendResp.textContent = String(e && e.message || e);
-  }
-
-  // ---------- Servers ----------
-  async function loadServers() {
-    try {
-      const data = await api('/servers');
-      const list = (data && data.servers) || [];
-      serverSelect.innerHTML = '';
-      if (!list.length) {
-        const opt = document.createElement('option');
-        opt.text = 'No servers configured';
-        opt.value = '';
-        serverSelect.appendChild(opt);
-        return;
-      }
-      list.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = String(s.index);
-        opt.text = `${s.name || 'Server'} — ${s.host}:${s.port}`;
-        serverSelect.appendChild(opt);
-      });
-    } catch (e) {
-      showError(e);
-    }
-  }
-
-  async function connect() {
-    try {
-      const idx = parseInt(serverSelect.value, 10);
-      if (!Number.isFinite(idx)) throw new Error('Select a server');
-      const r = await api('/connect', {
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body: JSON.stringify({ serverIndex: idx })
-      });
-      await refreshStatus();
-      sendResp.textContent = r && r.message ? r.message : 'Connected';
-    } catch (e) { showError(e); }
-  }
-
-  async function disconnect() {
-    try {
-      const r = await api('/disconnect', { method:'POST' });
-      await refreshStatus();
-      sendResp.textContent = r && r.message ? r.message : 'Disconnected';
-    } catch (e) { showError(e); }
-  }
-
-  async function refreshStatus() {
-    try {
-      const s = await api('/status');
-      setConnected(!!(s && s.connected), s && s.server);
-    } catch (e) {
-      setConnected(false);
-      console.warn('status failed', e);
-    }
-  }
-
-  // ---------- Commands list ----------
-  function renderCommands(items) {
-    const body = $('commandsBody');
-    const filter = ($('cmdFilter').value || '').toLowerCase();
-    body.innerHTML = '';
-    const rows = items
-      .filter(it => {
-        if (!filter) return true;
-        return (
-          (it.command || '').toLowerCase().includes(filter) ||
-          (it.description || '').toLowerCase().includes(filter) ||
-          (it.params || '').toLowerCase().includes(filter)
-        );
-      })
-      .map(it => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><code>${escapeHtml(it.command || '')}</code></td>
-          <td>${escapeHtml(it.description || '')}</td>
-          <td class="small muted">${escapeHtml(it.params || '')}</td>
-        `;
-        tr.addEventListener('click', () => {
-          const input = $('cmdInput');
-          input.value = it.command || '';
-          input.focus();
-        });
-        return tr;
-      });
-    rows.forEach(tr => body.appendChild(tr));
-  }
-
-  async function loadCommands() {
-    try {
-      const data = await api('/commands');
-      const items = (data && Array.isArray(data.items) && data.items.length) ?
-        data.items :
-        ((data && Array.isArray(data.commands)) ? data.commands.map(c => ({ command:c, description:'', params:'' })) : []);
-      renderCommands(items);
-    } catch (e) { showError(e); }
-  }
-
- async function sendCmd() {
-    try {
-      const cmd = document.getElementById('cmdInput').value.trim();
-      if (!cmd) throw new Error('Enter a command');
-
-      const quietMs = Math.max(0, parseInt(document.getElementById('quietMs').value, 10) || 0);
-      const maxMs   = Math.max(100, parseInt(document.getElementById('maxMs').value, 10) || 2000);
-
-      const r = await api('/send', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ command: cmd, quietMs, maxMs })
-      });
-
-      // Prefer the collected text (what the controller replied)
-      const box = document.getElementById('sendResp');
-      let out = '';
-
-      if (r && r.response) {
-        if (typeof r.response.text === 'string') {
-          out = r.response.text.replace(/\r\n/g, '\n').trim();
-          if (!out && r.response.bytes > 0) {
-            out = `[${r.response.bytes} bytes received, but no UTF-8 text]`;
-          }
-        } else if (typeof r.response.hex === 'string' && r.response.hex.length) {
-          out = `(hex) ${r.response.hex}`;
-        } else {
-          out = 'OK (no printable text)';
-        }
-      } else {
-        // No response collected means no quietMs/waitMs was used
-        out = 'Sent. (No response collected — set quietMs or waitMs to capture reply)';
-      }
-
-      box.textContent = out;
-
-      // keep the full object in console for debugging
-      console.debug('[send] full response:', r);
-    } catch (e) {
-      console.error(e);
-      document.getElementById('sendResp').textContent = String(e && e.message || e);
-    }
-  }
-
-  // ---------- Logs ----------
-  let logTimer = null;
-  let logsPaused = false;
-
-  async function fetchLogs(limit) {
-    const data = await api(`/logs?limit=${encodeURIComponent(limit)}`);
-    return (data && Array.isArray(data.lines)) ? data.lines : [];
-  }
-
-  async function refreshLogsOnce() {
-    try {
-      const limit = Math.min(Math.max(parseInt($('logLimit').value,10) || 300, 50), 2000);
-      const lines = await fetchLogs(limit);
-      logBox.textContent = lines.join('\n');
-      logCount.textContent = `(${lines.length} lines)`;
-      if ($('autoScroll').checked) logBox.scrollTop = logBox.scrollHeight;
-    } catch (e) {
-      console.warn('logs error', e);
-    }
-  }
-
-  function startLogs() {
-    if (logTimer) return;
-    logsPaused = false;
-    refreshLogsOnce();
-    logTimer = setInterval(refreshLogsOnce, 1500);
-    $('toggleLogs').textContent = 'Pause';
-  }
-  function stopLogs() {
-    logsPaused = true;
-    if (logTimer) { clearInterval(logTimer); logTimer = null; }
-    $('toggleLogs').textContent = 'Resume';
-  }
-
-  // ---------- Utils ----------
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  // ---------- Wire up ----------
-  window.addEventListener('DOMContentLoaded', async () => {
-    $('connectBtn').addEventListener('click', connect);
-    $('disconnectBtn').addEventListener('click', disconnect);
-    $('sendBtn').addEventListener('click', sendCmd);
-    $('reloadCmds').addEventListener('click', loadCommands);
-    $('cmdFilter').addEventListener('input', loadCommands);
-    $('refreshLogs').addEventListener('click', refreshLogsOnce);
-    $('toggleLogs').addEventListener('click', () => (logTimer ? stopLogs() : startLogs()));
-
-    await loadServers();
-    await refreshStatus();
-    await loadCommands();
-    startLogs();
-  });
-})();
-</script>
+  <div class="card">
+    <h2>Responses <span id="recv-count" class="muted"></span></h2>
+    <div class="row">
+      <label>Bytes <input id="recv-limit" type="number" min="64" max="32768" step="64" value="2048" /></label>
+      <label>Interval (ms) <input id="recv-interval" type="number" min="250" step="250" value="2000" /></label>
+      <label>Encoding 
+        <select id="recv-enc">
+          <option value="utf8" selected>utf8</option>
+          <option value="hex">hex</option>
+          <option value="base64">base64</option>
+        </select>
+      </label>
+      <label><input id="recv-auto" type="checkbox" checked /> Auto-scroll</label>
+      <button class="btn" id="recv-toggle" onclick="toggleRecv()">Stop Tail</button>
+      <button class="btn" onclick="doRecvFetchOnce()">Fetch Once</button>
+      <button class="btn" onclick="clearRecvView()">Clear View</button>
+    </div>
+    <div id="recv-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
+  </div>
 </body>
 </html>
