@@ -49,12 +49,6 @@
       if (data && Array.isArray(data.lines)) return data.lines;
       return [];
     }
-    async function fetchRecv(limitBytes, encoding) {
-      var n = parseInt(limitBytes, 10); if (!Number.isFinite(n) || n <= 0) n = 2048;
-      var enc = encoding || 'utf8';
-      const res = await fetch('/recv?limitBytes=' + encodeURIComponent(n) + '&encoding=' + encodeURIComponent(enc), { cache: 'no-store' });
-      return res.json(); // { length, encoding, data }
-    }
     async function connectToServer(serverIndex) {
       const res = await fetch('/connect', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -218,30 +212,6 @@
     function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
 
     // ==============================
-    // Responses live tail (/recv)
-    // ==============================
-    var recvTimer = null;
-    function stopRecvTail() { if (recvTimer) { clearInterval(recvTimer); recvTimer = null; } document.getElementById('recv-toggle').textContent = 'Start Tail'; }
-    async function doRecvFetchOnce() {
-      const limit = parseInt(document.getElementById('recv-limit').value, 10) || 2048;
-      const enc = document.getElementById('recv-enc').value || 'utf8';
-      const res = await fetchRecv(limit, enc);
-      const box = document.getElementById('recv-container');
-      const auto = document.getElementById('recv-auto').checked;
-      box.textContent = (res && res.data) ? res.data : '';
-      if (auto) box.scrollTop = box.scrollHeight;
-      document.getElementById('recv-count').textContent = '(' + (res && res.length ? res.length : 0) + ' bytes)';
-    }
-    function startRecvTail() {
-      const intervalMs = parseInt(document.getElementById('recv-interval').value, 10) || 2000;
-      if (recvTimer) clearInterval(recvTimer);
-      recvTimer = setInterval(doRecvFetchOnce, intervalMs); doRecvFetchOnce();
-      document.getElementById('recv-toggle').textContent = 'Stop Tail';
-    }
-    function toggleRecv() { if (recvTimer) { stopRecvTail(); } else { startRecvTail(); } }
-    function clearRecvView() { document.getElementById('recv-container').textContent = ''; document.getElementById('recv-count').textContent = ''; }
-
-    // ==============================
     // Init
     // ==============================
     async function initialize() {
@@ -249,7 +219,7 @@
         const servers = await fetchServers();
         populateServers(servers);
         const status = await fetchStatus(); setStatusText(status);
-        await refreshCommandsUI(); startLogTail(); startRecvTail();
+		await refreshCommandsUI(); startLogTail();
         var f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
       } catch (e) { console.error('Initialization error:', e); }
     }
@@ -327,24 +297,5 @@
     <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
   </div>
 
-  <div class="card">
-    <h2>Responses <span id="recv-count" class="muted"></span></h2>
-    <div class="row">
-      <label>Bytes <input id="recv-limit" type="number" min="64" max="32768" step="64" value="2048" /></label>
-      <label>Interval (ms) <input id="recv-interval" type="number" min="250" step="250" value="2000" /></label>
-      <label>Encoding 
-        <select id="recv-enc">
-          <option value="utf8" selected>utf8</option>
-          <option value="hex">hex</option>
-          <option value="base64">base64</option>
-        </select>
-      </label>
-      <label><input id="recv-auto" type="checkbox" checked /> Auto-scroll</label>
-      <button class="btn" id="recv-toggle" onclick="toggleRecv()">Stop Tail</button>
-      <button class="btn" onclick="doRecvFetchOnce()">Fetch Once</button>
-      <button class="btn" onclick="clearRecvView()">Clear View</button>
-    </div>
-    <div id="recv-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
-  </div>
 </body>
 </html>
