@@ -23,8 +23,13 @@
     .small { font-size: 0.85rem; color: #555; }
     #queue { white-space: pre-wrap; font-size: 12px; color:#333; }
     .logLine { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; white-space: pre-wrap; margin: 0; padding: 0; }
+    .logLine .ts { color: #666; margin-right: 4px; }
+    .cat-http { color: #0366d6; }
+    .cat-cmd { color: #795548; }
+    .cat-rx { color: #2e7d32; }
+    .cat-push { color: #6a1b9a; }
+    .cat-error { color: #d32f2f; }
     #log-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
-    #recv-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
   </style>
 </head>
 <body>
@@ -60,25 +65,8 @@
       <label>maxMs <input id="max-ms" type="number" min="0" value="2000" /></label>
     </div>
 
-    <div class="row" style="margin-top: 8px;">
-      <strong>Display:</strong>
-      <label>Show
-        <select id="display-encoding">
-          <option value="text">text</option>
-          <option value="hex">hex</option>
-          <option value="base64">base64</option>
-        </select>
-      </label>
-      <label>Limit bytes <input id="display-limit" type="number" min="1" value="4096" /></label>
-      <button class="btn" onclick="refreshRecv()">Refresh Receive Buffer</button>
-      <button class="btn" onclick="clearRecv()">Clear Receive Buffer</button>
     </div>
 
-  </div>
-
-  <div class="card">
-    <h2>Servers</h2>
-    <div id="servers" class="small"></div>
   </div>
 
   <div class="card">
@@ -164,9 +152,9 @@
         opt.textContent = `${s.name} (${s.host}:${s.port})`;
         sel.appendChild(opt);
       }
-      document.getElementById('servers').textContent = JSON.stringify(data, null, 2);
+      /* removed servers pane */
     } catch (e) {
-      document.getElementById('servers').textContent = String(e);
+      /* removed servers pane */
     }
   }
 
@@ -222,17 +210,60 @@
 
   async function doLogFetchOnce(){
     try {
-      const limit = Number(document.getElementById('log-limit').value || 200);
-      const r = await fetch(`/logs?limit=${limit}&format=txt`);
-      const t = await r.text();
-      const el = document.getElementById('log-container');
-      el.textContent = '';
-      for (const line of t.split(/\r?\n/)) {
-        const p = document.createElement('p');
-        p.className = 'logLine';
-        p.textContent = line;
-        el.appendChild(p);
+      var limit = Number(document.getElementById('log-limit').value || 200);
+      var r = await fetch('/logs?limit=' + limit + '&format=txt');
+      var t = await r.text();
+      var el = document.getElementById('log-container');
+      el.innerHTML = '';
+      var lines = t.split('
+');
+      for (var i = 0; i < lines.length; i++) {
+        var raw = lines[i];
+        if (!raw) continue;
+        if (raw.charCodeAt(raw.length - 1) === 13) raw = raw.slice(0, -1); // trim CR
+        var out = renderLogLine(raw);
+        el.appendChild(out.node);
       }
+      autoScrollIfNeeded();
+    } catch (e) {
+      clientLog('log fetch failed: ' + e.message);
+    }
+  }
+
+  function renderLogLine(line){
+    var node = document.createElement('div');
+    node.className = 'logLine';
+
+    var ts = '';
+    var rest = line;
+    if (line.length > 2 && line.charCodeAt(0) === 91) { // '['
+      var rb = line.indexOf(']');
+      if (rb > 0) {
+        ts = line.slice(1, rb);
+        rest = line.slice(rb + 1).trimStart();
+      }
+    }
+
+    var tsSpan = document.createElement('span');
+    tsSpan.className = 'ts';
+    tsSpan.textContent = ts ? '[' + ts + '] ' : '';
+    node.appendChild(tsSpan);
+
+    var body = document.createElement('span');
+    body.textContent = rest;
+
+    var low = rest.toLowerCase();
+    var cls = '';
+    if (rest.indexOf('HTTP') === 0) cls = 'http';
+    else if (rest.indexOf('CMD') === 0 || rest.indexOf('CMD/API') !== -1) cls = 'cmd';
+    else if (rest.indexOf('RX <-') === 0 || rest.indexOf(' RX <-') !== -1) cls = 'rx';
+    else if (low.indexOf('push') !== -1) cls = 'push';
+    else if (low.indexOf('error') !== -1) cls = 'error';
+
+    body.className = 'cat-' + (cls || 'plain');
+    node.appendChild(body);
+    return { node: node };
+  }
       autoScrollIfNeeded();
     } catch (e) {
       clientLog('log fetch failed: ' + e.message);
@@ -321,24 +352,7 @@
   window.addEventListener('load', init);
 </script>
 
-  <div class="card">
-    <h2>Receive Buffer</h2>
-    <div class="row">
-      <button class="btn" onclick="refreshRecv()">Refresh</button>
-      <label>View as
-        <select id="display-encoding">
-          <option value="text">text</option>
-          <option value="hex">hex</option>
-          <option value="base64">base64</option>
-        </select>
-      </label>
-      <label>Limit <input id="display-limit" type="number" min="1" value="2048" /></label>
-      <button class="btn" onclick="clearRecv()">Clear</button>
-    </div>
-    <div id="recv-container" class="card" style="margin-top: 8px; max-height: 240px;"></div>
-  </div>
-
-  <div class="card" style="margin-bottom: 80px;"></div>
+  
 
 </body>
 </html>
