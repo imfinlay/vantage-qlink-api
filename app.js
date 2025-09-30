@@ -287,7 +287,8 @@ const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
 // Awaiters: allow parallel VGS requests without holding the queue
-const AWAITERS = new Map(); // key -> [{resolve,reject,timeout}]
+const AWAITERS = new Map();
+const VGS_WAIT_ORDER = []; // FIFO of keys awaiting a reply (for bare 0/1 fallbacks) // key -> [{resolve,reject,timeout}]
 function awaitVGS(m, s, b, timeoutMs) {
   const key = vgsKey(m, s, b);
   return new Promise((resolve, reject) => {
@@ -425,7 +426,7 @@ function processIncomingText(chunkUtf8) {
     let rest = INCOMING_TEXT_BUF.slice(idx + 1);
     if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     INCOMING_TEXT_BUF = rest;
-    if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); }
+    if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
   }
   // If no newline present, keep accumulating.
 }
@@ -458,6 +459,46 @@ function processIncomingLineForVGS(rawLine) {
   }
 }
 
+function processIncomingLineForBare01(rawLine) {
+  const m = String(rawLine).trim().match(/^([01])$/);
+  if (!m) return;
+  const v = Number(m[1]);
+  const key = VGS_WAIT_ORDER.shift();
+  if (!key) return;
+  VGS_CACHE.set(key, { ts: Date.now(), value: !!v, raw: String(v), bytes: String(rawLine).length });
+  const list = AWAITERS.get(key);
+  if (list && list.length) {
+    AWAITERS.delete(key);
+    for (const entry of list) {
+      try { clearTimeout(entry.timeout); entry.resolve(String(v)); } catch (_) {}
+    }
+  }
+}
+
+function processIncomingLineForRGS(rawLine) {
+  // Resolve awaiters on lines like: "RGS m s b v" (detailed read reply)
+  const re = /(?:^|\s)RGS\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) {
+    const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
+    const key = vgsKey(M, S, B);
+    VGS_CACHE.set(key, { ts: Date.now(), value: !!V, raw: String(V), bytes: String(rawLine).length });
+    // Resolve any awaiters for this key
+    const list = AWAITERS.get(key);
+    if (list && list.length) {
+      AWAITERS.delete(key);
+      for (const entry of list) {
+        try { clearTimeout(entry.timeout); entry.resolve(rawLine); } catch (_) {}
+      }
+    }
+    // Remove from FIFO fallback queue if present
+    if (typeof VGS_WAIT_ORDER !== 'undefined') {
+      const idx = VGS_WAIT_ORDER.indexOf(key);
+      if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
+    }
+  }
+}
+
 function onSWEvent({ m, s, b, v }) {
   if (PUSH_DEBUG) logLine(`PUSH heard SW ${m}/${s}/${b} -> ${v}`);
   if (!isWhitelisted(m, s, b)) return; // ignore devices not exposed to HB
@@ -481,7 +522,7 @@ function onSWEvent({ m, s, b, v }) {
 }
 
 async function confirmOneVGS(m, s, b) {
-  const cmd = `VGS ${m} ${s} ${b}`;
+  const cmd = `VGS# ${m} ${s} ${b}`;
   const buf = await sendAndCollect(cmd, { quietMs: 300, maxMs: 2000, priority: 6 });
   const raw = buf.toString('utf8').trim();
   const m01 = raw.match(/\b([01])\b/);
@@ -664,7 +705,7 @@ app.get('/status/vgs', async (req, res) => {
       return res.status(400).json({ ok:false, message: 'Missing or invalid m/s/b.' });
     }
 
-    const cmd = `VGS ${m} ${s} ${b}`;
+    const cmd = `VGS# ${m} ${s} ${b}`;
     logHttp(req, cmd);
 
     const quietMs  = Number(req.query.quietMs || 200);
@@ -709,6 +750,7 @@ app.get('/status/vgs', async (req, res) => {
       if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
       // Register waiter before sending so we don't miss the reply
       const respP = awaitVGS(m, s, b, maxMs);
+      VGS_WAIT_ORDER.push(key);
       // Only the write is serialized; we don't block the queue while waiting
       await runQueued(async () => { await sendCmdLogged(cmd); }, { priority: 0, label: cmd });
       const raw = await respP;
@@ -716,6 +758,11 @@ app.get('/status/vgs', async (req, res) => {
       const value = m01 ? Number(m01[1]) : null;
       const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
       VGS_CACHE.set(key, rec);
+      // cleanup any leftover entry in the wait-order queue
+      {
+        const idx = VGS_WAIT_ORDER.indexOf(key);
+        if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
+      }
       return { value, raw: String(raw), bytes: String(raw).length };
     })();
 

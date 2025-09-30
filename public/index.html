@@ -12,280 +12,102 @@
     .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
     .btn { cursor: pointer; padding: 6px 10px; border: 1px solid #888; border-radius: 6px; background:#fafafa; }
     .btn:hover { background:#f0f0f0; }
-    #output, #latest-response { white-space: pre-wrap; background:#f6f6f6; padding:10px; border:1px solid #ddd; border-radius: 6px; }
-    #log-container, #recv-container { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; background:#0b0b0b; color:#d7d7d7; border-radius: 6px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; border-bottom: 1px solid #f0f0f0; padding: 6px; vertical-align: top; }
-    th { border-bottom: 1px solid #ddd; }
-    .muted { color:#666; font-size: 0.9em; }
-    input[type="number"] { width: 7ch; }
+    .btn.primary { background: #0069ff; color: white; border-color: #0060e6; }
+    .btn.primary:hover { background:#0058d9; }
+    input[type="text"], input[type="number"], select { padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: #f7faff; }
+    .monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .small { font-size: 0.85rem; color: #555; }
+    #queue { white-space: pre-wrap; font-size: 12px; color:#333; }
+    .logLine { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; white-space: pre-wrap; margin: 0; padding: 0; }
+    #log-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
+    #recv-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
   </style>
-  <script>
-    // ==============================
-    // API helpers (robust & cache-busting)
-    // ==============================
-    async function fetchServers() {
-      const res = await fetch('/servers', { cache: 'no-store' });
-      const data = await res.json();
-      // Accept [{...}] or { servers: [...] }
-      if (Array.isArray(data)) return data;
-      if (data && Array.isArray(data.servers)) return data.servers;
-      return [];
-    }
-    async function fetchCommands() {
-      const res = await fetch('/commands', { cache: 'no-store' });
-      const data = await res.json();
-      // Prefer rich shape
-      if (data && Array.isArray(data.items) && data.items.length) return data.items;
-      // Fallback to legacy string list
-      var cmds = (data && Array.isArray(data.commands)) ? data.commands : [];
-      return cmds.map(function(c){ return { command: c, params: '', description: '' }; });
-    }
-    async function fetchLogs(limit) {
-      var n = parseInt(limit, 10); if (!Number.isFinite(n) || n <= 0) n = 200;
-      const res = await fetch('/logs?limit=' + encodeURIComponent(n), { cache: 'no-store' });
-      const data = await res.json();
-      if (Array.isArray(data)) return data;
-      if (data && Array.isArray(data.lines)) return data.lines;
-      return [];
-    }
-    async function connectToServer(serverIndex) {
-      const res = await fetch('/connect', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverIndex: serverIndex })
-      });
-      return res.json();
-    }
-    async function disconnect() {
-      const res = await fetch('/disconnect', { method: 'POST' });
-      return res.json();
-    }
-    async function sendCommand(message, waitMs) {
-      var body = { command: message };
-      if (typeof waitMs === 'number' && waitMs > 0) body.waitMs = waitMs;
-      const res = await fetch('/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      return res.json(); // { message, response? }
-    }
-    async function fetchStatus() {
-      const res = await fetch('/status', { cache: 'no-store' });
-      return res.json();
-    }
-
-    // ==============================
-    // UI helpers
-    // ==============================
-    function populateServers(servers) {
-      const select = document.getElementById('server-select');
-      select.innerHTML = '';
-      servers.forEach(function(server, index){
-        const option = document.createElement('option');
-        option.value = index;
-        option.textContent = server.name + ' (' + server.host + ':' + server.port + ')';
-        select.appendChild(option);
-      });
-    }
-
-    function getSelectedModifier() {
-      const radios = document.querySelectorAll('input[name="modifier"]');
-      for (var i=0; i<radios.length; i++) { if (radios[i].checked) return radios[i].value; }
-      return '';
-    }
-
-    function setStatusText(connectedObj) {
-      const el = document.getElementById('status');
-      var connected = connectedObj && !!connectedObj.connected;
-      var svr = (connectedObj && connectedObj.server) ? connectedObj.server : {};
-      var label = svr.name || svr.host || '';
-      el.textContent = connected ? ('Connected to ' + label) : 'Not connected';
-    }
-
-    async function onConnectClick() {
-      const select = document.getElementById('server-select');
-      const index = parseInt(select.value, 10);
-      const result = await connectToServer(index);
-      document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      const status = await fetchStatus(); setStatusText(status);
-    }
-
-    async function onDisconnectClick() {
-      const result = await disconnect();
-      document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      const status = await fetchStatus(); setStatusText(status);
-    }
-
-    async function onSendClick() {
-      const input = document.getElementById('command-input');
-      const modifier = getSelectedModifier();
-      const message = input.value + (modifier || '');
-      var waitMs = 0;
-      var chk = document.getElementById('wait-enable');
-      if (chk && chk.checked) {
-        waitMs = parseInt(document.getElementById('wait-ms').value, 10) || 0;
-      }
-      const result = await sendCommand(message, waitMs);
-      document.getElementById('output').textContent = result.message || JSON.stringify(result);
-      var respBox = document.getElementById('latest-response');
-      if (result && result.response && typeof result.response.text === 'string') {
-        respBox.textContent = result.response.text;
-      } else {
-        respBox.textContent = '(no response captured)';
-      }
-    }
-
-    // ==============================
-    // Commands table (searchable)
-    // ==============================
-    var __allCommands = [];
-
-    function renderCommandsTable(rows) {
-      const tbody = document.getElementById('commands-tbody');
-      tbody.innerHTML = '';
-      if (!rows.length) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 3; td.className = 'muted'; td.style.padding = '8px';
-        td.textContent = 'No commands loaded (check commands.csv)';
-        tr.appendChild(td); tbody.appendChild(tr); return;
-      }
-      rows.forEach(function(row){
-        var command = row.command || '', params = row.params || '', description = row.description || '';
-        const tr = document.createElement('tr');
-        [command, params, description].forEach(function(text){
-          const td = document.createElement('td');
-          td.textContent = text; td.style.padding = '6px';
-          tr.appendChild(td);
-        });
-        tr.style.cursor = 'pointer';
-        tr.title = 'Click to insert the command into the input box';
-        tr.addEventListener('click', function(){
-          const input = document.getElementById('command-input');
-          input.value = command; input.focus();
-        });
-        tbody.appendChild(tr);
-      });
-    }
-
-    function applyCommandFilter() {
-      const q = (document.getElementById('cmd-filter').value || '').toLowerCase();
-      if (!q) return renderCommandsTable(__allCommands);
-      const filtered = __allCommands.filter(function(row){
-        var c = row.command || '', p = row.params || '', d = row.description || '';
-        return c.toLowerCase().includes(q) || p.toLowerCase().includes(q) || d.toLowerCase().includes(q);
-      });
-      renderCommandsTable(filtered);
-    }
-
-    async function refreshCommandsUI() {
-      try {
-        __allCommands = await fetchCommands();
-        renderCommandsTable(__allCommands);
-      } catch (e) {
-        console.error('Commands load failed:', e);
-        __allCommands = []; renderCommandsTable(__allCommands);
-      }
-    }
-
-    // ==============================
-    // Logs live tail
-    // ==============================
-    var logTimer = null;
-    function stopLogTail() { if (logTimer) { clearInterval(logTimer); logTimer = null; } document.getElementById('tail-toggle').textContent = 'Start Tail'; }
-    async function doLogFetchOnce() {
-      const limit = parseInt(document.getElementById('log-limit').value, 10) || 200;
-      const lines = await fetchLogs(limit);
-      const box = document.getElementById('log-container');
-      const auto = document.getElementById('auto-scroll').checked;
-      box.textContent = lines.join('\n');
-      if (auto) box.scrollTop = box.scrollHeight;
-      document.getElementById('log-count').textContent = '(' + lines.length + ' lines)';
-    }
-    function startLogTail() {
-      const intervalMs = parseInt(document.getElementById('log-interval').value, 10) || 2000;
-      if (logTimer) clearInterval(logTimer);
-      logTimer = setInterval(doLogFetchOnce, intervalMs); doLogFetchOnce();
-      document.getElementById('tail-toggle').textContent = 'Stop Tail';
-    }
-    function toggleTail() { if (logTimer) { stopLogTail(); } else { startLogTail(); } }
-    function clearLogView() { document.getElementById('log-container').textContent = ''; document.getElementById('log-count').textContent = ''; }
-
-    // ==============================
-    // Init
-    // ==============================
-    async function initialize() {
-      try {
-        const servers = await fetchServers();
-        populateServers(servers);
-        const status = await fetchStatus(); setStatusText(status);
-		await refreshCommandsUI(); startLogTail();
-        var f = document.getElementById('cmd-filter'); if (f) f.addEventListener('input', applyCommandFilter);
-      } catch (e) { console.error('Initialization error:', e); }
-    }
-    document.addEventListener('DOMContentLoaded', initialize);
-  </script>
 </head>
 <body>
-  <h1>TCP Command Console</h1>
 
-  <div class="card">
-    <h2>Server</h2>
-    <div class="row">
-      <label for="server-select">Select:</label>
+  <h1>TCP Command Console</h1>
+  <div class="row">
+    <label>Server:
       <select id="server-select"></select>
-      <button class="btn" id="connect-btn" onclick="onConnectClick()">Connect</button>
-      <button class="btn" id="disconnect-btn" onclick="onDisconnectClick()">Disconnect</button>
-      <span id="status" class="muted">Not connected</span>
-    </div>
+    </label>
+    <button class="btn" onclick="doConnect()">Connect</button>
+    <button class="btn" onclick="doDisconnect()">Disconnect</button>
+    <span id="conn-status" class="small">Not connected</span>
   </div>
 
   <div class="card">
     <h2>Send Command</h2>
     <div class="row">
-      <input id="command-input" type="text" placeholder="Enter command" />
-      <div class="row" style="gap: 14px;">
-        <label><input type="radio" name="modifier" value="" checked /> None</label>
-        <label><input type="radio" name="modifier" value="$" /> $ (short)</label>
-        <label><input type="radio" name="modifier" value="#" /> # (detailed)</label>
-      </div>
-      <div class="row" style="gap: 8px;">
-        <label><input id="wait-enable" type="checkbox" /> Wait for response</label>
-        <label>Wait (ms) <input id="wait-ms" type="number" min="0" step="50" value="300" /></label>
-      </div>
-      <button class="btn" id="send-btn" onclick="onSendClick()">Send</button>
+      <input id="command-input" type="text" placeholder="Type command (e.g., VGS 2 20 7)" size="40" class="monospace" />
+      <button class="btn primary" onclick="onSendClick()">Send</button>
     </div>
-    <div style="margin-top: 8px;">
-      <strong>Output:</strong>
-      <pre id="output"></pre>
-      <strong>Latest Response:</strong> <span class="muted">(from /send)</span>
-      <pre id="latest-response"></pre>
+
+    <div style="margin-top: 8px;" class="row">
+      <strong>Response Mode:</strong>
+      <label><input type="radio" name="modifier" value="" checked /> None</label>
+      <label><input type="radio" name="modifier" value="$" /> $ (short, after command)</label>
+      <label><input type="radio" name="modifier" value="#" /> # (detailed, after command)</label>
     </div>
+
+    <div class="row" style="margin-top: 8px;">
+      <strong>Wait / Collect:</strong>
+      <label><input id="wait-response" type="checkbox" /> Wait for response</label>
+      <label>quietMs <input id="quiet-ms" type="number" min="0" value="300" /></label>
+      <label>maxMs <input id="max-ms" type="number" min="0" value="2000" /></label>
+    </div>
+
+    <div class="row" style="margin-top: 8px;">
+      <strong>Display:</strong>
+      <label>Show
+        <select id="display-encoding">
+          <option value="text">text</option>
+          <option value="hex">hex</option>
+          <option value="base64">base64</option>
+        </select>
+      </label>
+      <label>Limit bytes <input id="display-limit" type="number" min="1" value="4096" /></label>
+      <button class="btn" onclick="refreshRecv()">Refresh Receive Buffer</button>
+      <button class="btn" onclick="clearRecv()">Clear Receive Buffer</button>
+    </div>
+
+  </div>
+
+  <div class="card">
+    <h2>Servers</h2>
+    <div id="servers" class="small"></div>
   </div>
 
   <div class="card">
     <h2>Commands</h2>
-    <div class="row">
-      <input id="cmd-filter" type="text" placeholder="Filter (command, params, description)" />
-      <button class="btn" onclick="refreshCommandsUI()">Refresh</button>
-      <span class="muted">Click a row to insert the command into the input.</span>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." oninput="renderCommandsTable()" /></label>
+      <span class="small">Click a row to copy into the input.</span>
     </div>
-    <div style="overflow:auto; margin-top:8px;">
-      <table id="commands-table">
+    <div style="max-height: 260px; overflow-y: auto;">
+      <table>
         <thead>
           <tr>
-            <th>Command</th>
-            <th>Params</th>
+            <th style="width: 200px;">Command</th>
             <th>Description</th>
+            <th style="width: 300px;">Params</th>
           </tr>
         </thead>
-        <tbody id="commands-tbody"></tbody>
+        <tbody id="command-tbody"></tbody>
       </table>
     </div>
   </div>
 
   <div class="card">
-    <h2>Logs <span id="log-count" class="muted"></span></h2>
+    <h2>Queue + Status</h2>
+    <pre id="queue" class="monospace"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Logs Tail</h2>
     <div class="row">
       <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
       <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
@@ -296,6 +118,227 @@
     </div>
     <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
   </div>
+
+<script>
+  const $ = (sel) => document.querySelector(sel);
+
+  async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  }
+
+  function clientLog(msg) {
+    const el = document.createElement('p');
+    el.className = 'logLine';
+    el.textContent = `[client] ${msg}`;
+    document.getElementById('log-container').appendChild(el);
+  }
+
+  function getSelectedModifier() {
+    const el = document.querySelector('input[name="modifier"]:checked');
+    return el ? el.value : '';
+  }
+
+  // Insert modifier (# or $) after the command token instead of appending at the end.
+  function buildCommandWithModifier(raw, mod) {
+    raw = String(raw || '').trim();
+    if (!mod) return raw;
+    // Remove trailing same modifier if user typed it at the end previously
+    if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
+    const parts = raw.split(/\s+/);
+    if (!parts.length) return raw;
+    // Ensure only one inline modifier at the end of the command token
+    parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
+    return parts.join(' ');
+  }
+
+  async function populateServers() {
+    try {
+      const data = await getJSON('/servers');
+      const sel = document.getElementById('server-select');
+      sel.innerHTML = '';
+      for (const s of (data.servers || [])) {
+        const opt = document.createElement('option');
+        opt.value = s.index;
+        opt.textContent = `${s.name} (${s.host}:${s.port})`;
+        sel.appendChild(opt);
+      }
+      document.getElementById('servers').textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+      document.getElementById('servers').textContent = String(e);
+    }
+  }
+
+  async function onSendClick() {
+    const input = document.getElementById('command-input');
+    const modifier = getSelectedModifier();
+    const message = buildCommandWithModifier(input.value, modifier);
+
+    const wait = document.getElementById('wait-response').checked;
+    const quietMs = Number(document.getElementById('quiet-ms').value || 0);
+    const maxMs   = Number(document.getElementById('max-ms').value || 0);
+
+    const body = { command: message };
+    if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
+
+    clientLog(`POST /send: ${JSON.stringify(body)}`);
+    const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) {
+      const t = await r.text();
+      clientLog(`HTTP ${r.status}: ${t}`);
+      return;
+    }
+    const data = await r.json();
+    clientLog(JSON.stringify(data));
+  }
+
+  async function doConnect(){
+    const sel = document.getElementById('server-select');
+    const idx = Number(sel.value || 0);
+    const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
+    clientLog(await r.text());
+    await refreshStatus();
+  }
+  async function doDisconnect(){
+    const r = await fetch('/disconnect', { method:'POST' });
+    clientLog(await r.text());
+    await refreshStatus();
+  }
+
+  async function refreshStatus() {
+    try {
+      const data = await getJSON('/status');
+      document.getElementById('conn-status').textContent = data.connected ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}` : 'Not connected';
+      // queue info (if exposed)
+      try {
+        const q = await getJSON('/commands/queue');
+        document.getElementById('queue').textContent = JSON.stringify(q, null, 2);
+      } catch (_) { /* optional */ }
+    } catch (e) {
+      document.getElementById('conn-status').textContent = String(e);
+    }
+  }
+
+  async function doLogFetchOnce(){
+    try {
+      const limit = Number(document.getElementById('log-limit').value || 200);
+      const r = await fetch(`/logs?limit=${limit}&format=txt`);
+      const t = await r.text();
+      const el = document.getElementById('log-container');
+      el.textContent = '';
+      for (const line of t.split(/\r?\n/)) {
+        const p = document.createElement('p');
+        p.className = 'logLine';
+        p.textContent = line;
+        el.appendChild(p);
+      }
+      autoScrollIfNeeded();
+    } catch (e) {
+      clientLog('log fetch failed: ' + e.message);
+    }
+  }
+
+  let tailTimer = null;
+  function autoScrollIfNeeded(){
+    if (!document.getElementById('auto-scroll').checked) return;
+    const c = document.getElementById('log-container');
+    c.scrollTop = c.scrollHeight + 1000;
+  }
+  function toggleTail(){
+    const btn = document.getElementById('tail-toggle');
+    if (tailTimer) { clearInterval(tailTimer); tailTimer = null; btn.textContent = 'Start Tail'; }
+    else {
+      tailTimer = setInterval(doLogFetchOnce, Math.max(250, Number(document.getElementById('log-interval').value || 2000)) );
+      btn.textContent = 'Stop Tail';
+    }
+  }
+
+  function clearLogView(){ document.getElementById('log-container').textContent = ''; }
+
+  async function refreshRecv() {
+    try {
+      const limit = Number(document.getElementById('display-limit').value || 2048);
+      const mode  = document.getElementById('display-encoding').value || 'text';
+      const r = await getJSON(`/recv?limitBytes=${limit}&encoding=${mode}`);
+      const el = document.getElementById('recv-container');
+      el.textContent = `len=${r.length}, encoding=${r.encoding}\n` + r.data;
+    } catch (e) {
+      clientLog('recv fetch failed: ' + e.message);
+    }
+  }
+  function clearRecv(){ const el = document.getElementById('recv-container'); el.textContent = ''; }
+
+  async function populateCommands(){
+    try {
+      const data = await getJSON('/commands');
+      const items = data.items || [];
+      window.__items = items;
+      renderCommandsTable();
+    } catch (e) {
+      const tb = document.getElementById('command-tbody');
+      tb.innerHTML = `<tr><td colspan="3">${e.message}</td></tr>`;
+    }
+  }
+
+  function renderCommandsTable(){
+    const filt = (document.getElementById('cmd-filter').value || '').toLowerCase();
+    const items = (window.__items || []).filter(it =>
+      it.command.toLowerCase().includes(filt) ||
+      it.description.toLowerCase().includes(filt) ||
+      it.params.toLowerCase().includes(filt)
+    );
+
+    const tb = document.getElementById('command-tbody');
+    tb.innerHTML = '';
+
+    items.forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="monospace" data-command="${it.command}">${it.command}</td>
+        <td>${it.description}</td>
+        <td class="monospace">${it.params}</td>`;
+      tr.dataset.params = it.params || '';
+      tr.addEventListener('click', () => {
+        const mod = getSelectedModifier();
+        const withMod = buildCommandWithModifier(it.command, mod);
+        const full = it.params ? `${withMod} ${it.params}` : withMod;
+        const input = document.getElementById('command-input');
+        input.value = full;
+        input.focus();
+      });
+      tb.appendChild(tr);
+    });
+  }
+
+  async function init(){
+    await populateServers();
+    await refreshStatus();
+    await populateCommands();
+    toggleTail(); // start log tailing by default
+  }
+
+  window.addEventListener('load', init);
+</script>
+
+  <div class="card">
+    <h2>Receive Buffer</h2>
+    <div class="row">
+      <button class="btn" onclick="refreshRecv()">Refresh</button>
+      <label>View as
+        <select id="display-encoding">
+          <option value="text">text</option>
+          <option value="hex">hex</option>
+          <option value="base64">base64</option>
+        </select>
+      </label>
+      <label>Limit <input id="display-limit" type="number" min="1" value="2048" /></label>
+      <button class="btn" onclick="clearRecv()">Clear</button>
+    </div>
+    <div id="recv-container" class="card" style="margin-top: 8px; max-height: 240px;"></div>
+  </div>
+
+  <div class="card" style="margin-bottom: 80px;"></div>
 
 </body>
 </html>
