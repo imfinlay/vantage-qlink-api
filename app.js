@@ -569,9 +569,8 @@ function onSWEvent({ m, s, b, v }) {
 
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
-  const buf = await sendAndCollect(cmd, { quietMs: 300, maxMs: 2000, priority: 6 });
-  const raw = buf.toString('utf8').trim();
-  const m01 = raw.match(/\b([01])\b/);
+  const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
+  const m01 = String(raw).match(/\b([01])\b/);
   return m01 ? Number(m01[1]) : 0;
 }
 
@@ -871,7 +870,6 @@ app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
   const lines = tailFile(LOG_FILE_PATH, limit);
-
   if (String(req.query.format || '').toLowerCase() === 'txt') {
     return res.type('text/plain').send(lines.join('\n'));
   }
