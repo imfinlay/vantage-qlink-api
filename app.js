@@ -305,6 +305,41 @@ function awaitVGS(m, s, b, timeoutMs) {
   });
 }
 
+function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
+  return new Promise((resolve, reject) => {
+    runQueued(async () => {
+      try {
+        const key = vgsKey(m, s, b);
+        const p = awaitVGS(m, s, b, maxMs);       // timer starts just before the write
+        if (typeof VGS_WAIT_ORDER !== 'undefined') VGS_WAIT_ORDER.push(key);
+        await sendCmdLogged(cmd);                  // do the on-wire write (respects MIN_GAP_MS)
+        // release queue now; resolve later when reply arrives
+        p.then(raw => {
+          try {
+            if (typeof VGS_WAIT_ORDER !== 'undefined') {
+              const idx = VGS_WAIT_ORDER.indexOf(key);
+              if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
+            }
+          } catch (_) {}
+          resolve(raw);
+        }).catch(err => {
+          try {
+            if (typeof VGS_WAIT_ORDER !== 'undefined') {
+              const idx = VGS_WAIT_ORDER.indexOf(key);
+              if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
+            }
+          } catch (_) {}
+          reject(err);
+        });
+        return; // important: return without awaiting p, so the queue moves on
+      } catch (e) {
+        reject(e);
+      }
+    }, { priority: 0, label: cmd });
+  });
+}
+
+
 // -------------------------------
 // NEW: Homebridge-driven whitelist + VOS push ingest
 // -------------------------------
@@ -523,9 +558,8 @@ function onSWEvent({ m, s, b, v }) {
 
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
-  const buf = await sendAndCollect(cmd, { quietMs: 300, maxMs: 2000, priority: 6 });
-  const raw = buf.toString('utf8').trim();
-  const m01 = raw.match(/\b([01])\b/);
+  const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
+  const m01 = String(raw).match(/\b([01])\b/);
   return m01 ? Number(m01[1]) : 0;
 }
 
@@ -747,24 +781,14 @@ app.get('/status/vgs', async (req, res) => {
 
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
-      if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-      // Register waiter before sending so we don't miss the reply
-      const respP = awaitVGS(m, s, b, maxMs);
-      VGS_WAIT_ORDER.push(key);
-      // Only the write is serialized; we don't block the queue while waiting
-      await runQueued(async () => { await sendCmdLogged(cmd); }, { priority: 0, label: cmd });
-      const raw = await respP;
-      const m01 = String(raw).match(/\b([01])\b/);
-      const value = m01 ? Number(m01[1]) : null;
-      const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
-      VGS_CACHE.set(key, rec);
-      // cleanup any leftover entry in the wait-order queue
-      {
-        const idx = VGS_WAIT_ORDER.indexOf(key);
-        if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
-      }
-      return { value, raw: String(raw), bytes: String(raw).length };
-    })();
+  if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
+  const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+  const m01 = String(raw).match(/\b([01])\b/);
+  const value = m01 ? Number(m01[1]) : null;
+  const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+  VGS_CACHE.set(key, rec);
+  return { value, raw: String(raw), bytes: String(raw).length };
+})();
 
     VGS_INFLIGHT.set(key, p);
     let out;
