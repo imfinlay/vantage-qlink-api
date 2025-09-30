@@ -38,8 +38,11 @@ const { LOG_FILE_PATH, servers, HANDSHAKE } = require('./config.js');
 
 const app = express();
 const server = http.createServer(app);
+<<<<<<< HEAD
 // JSON body parser for POST endpoints used by the UI
 app.use(express.json());
+=======
+>>>>>>> parent of 48c83c8 (Update app.js)
 const PORT = 3000;
 
 const STATE = new Map();             // push-derived state
@@ -143,6 +146,7 @@ function parseVOS(line) {
   } else if (t === 'VGS' && parts.length >= 5) {
     const m = +parts[1], s = +parts[2], b = +parts[3], v = +parts[4];
     VGS_CACHE.set(vgsKey(m, s, b), { ts: Date.now(), value: !!v, raw: String(v), bytes: 1 });
+<<<<<<< HEAD
   }
 }
 
@@ -313,6 +317,138 @@ app.post('/send', (req, res) => {
   }
 });
 
+=======
+  }
+}
+
+socket.on('data', (buf) => {
+  // TCP framing can deliver multiple lines at once; split and parse each.
+  // With PUSH_DEBUG=1 you also get raw RECV lines to correlate timing.
+  const s = buf.toString('utf8');
+  s.split(/\r?\n/).forEach(line => {
+    if (!line) return;
+    if (PUSH_DEBUG) logLine(`RECV ${line}`);
+    parseVOS(line);
+  });
+});
+
+/**
+ * confirmOneVGS: single VGS read at PUSH_CONFIRM priority
+ *  - Debounced by onSWEvent so we confirm at most once per device per burst
+ */
+async function confirmOneVGS(m, s, b) {
+  return new Promise((resolve, reject) => {
+    const cmd = `VGS ${m} ${s} ${b}`;
+    enqueue(cmd, PRIORITY.PUSH_CONFIRM, resolve, reject, { type: 'VGS', m, s, b });
+  });
+}
+
+/**
+ * setState: records the push-confirmed value and warms the VGS cache
+ *  - STATE map => short-lived push freshness window for /status/vgs
+ *  - VGS_CACHE => avoids on-wire read on next poll
+ */
+function setState(m, s, b, value) {
+  const now = Date.now();
+  const k = keyOf(m, s, b);
+  STATE.set(k, { value, ts: now });
+  // Mirror to VGS cache too for richer /status JSON path
+  const keyV = vgsKey(m, s, b);
+  VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1 });
+    if (PUSH_DEBUG) logLine(`PUSH cache updated ${m}/${s}/${b} -> ${value}`);
+}
+
+// Small helper: TTL-constrained fetch from the VGS cache
+function getCachedVGS(m, s, b, maxAgeMs) {
+  const k = vgsKey(m, s, b);
+  const e = VGS_CACHE.get(k);
+  if (!e) return null;
+  if (Date.now() - e.ts > maxAgeMs) return null;
+  return e;
+}
+
+/**
+ * /status/vgs decision tree:
+ * 1) If we have a fresh push (<=10s), serve it immediately (zero I/O)
+ * 2) Else if cacheMs provided and a fresh cache entry exists, serve cached
+ * 3) Else coalesce a real VGS read (with optional jitter) and fan out results
+ *
+ * Notes:
+ * - format=bool returns plain 'true'/'false' for Homebridge HTTP-SWITCH
+ * - jitterMs staggers similar polls to reduce burst collisions
+ * - inflight map collapses concurrent identical reads into one on-wire VGS
+ */
+function serveVGS(req, res) {
+  const q = url.parse(req.url, true).query;
+  const m = +q.m, s = +q.s, b = +q.b;
+  const format = q.format || 'json';
+  const cacheMs = +q.cacheMs || 0;
+  const jitterMs = +q.jitterMs || 0;
+  const quietMs = +q.quietMs || 0;
+  const maxMs = +q.maxMs || 2000;
+
+  if (!(m>=0 && s>=0 && b>=0)) return res.status(400).json({ error: 'missing m/s/b' });
+
+  // Return push or cached immediately if fresh
+  const pushFresh = STATE.get(keyOf(m, s, b));
+  if (pushFresh && (Date.now() - pushFresh.ts) < 10000) {
+    if (format === 'bool') return res.type('text/plain').send(pushFresh.value ? 'true' : 'false');
+    return res.json({ ok: true, sent: '(push-cache) VGS', value: pushFresh.value, cached: true, ts: pushFresh.ts });
+  }
+
+  if (cacheMs) {
+    const e = getCachedVGS(m, s, b, cacheMs);
+    if (e) {
+      if (format === 'bool') return res.type('text/plain').send(e.value ? 'true' : 'false');
+      return res.json({ ok: true, sent: '(cached) VGS', value: e.value, cached: true, ts: e.ts });
+    }
+  }
+
+  // Coalesce in-flight: simplistic (one per key)
+  const key = vgsKey(m, s, b);
+  if (!req.app.locals.inflight) req.app.locals.inflight = new Map();
+  const inflight = req.app.locals.inflight;
+  const existing = inflight.get(key);
+  if (existing) {
+    existing.push({ res, format });
+    return;
+  }
+  inflight.set(key, [{ res, format }]);
+
+  if (jitterMs) {
+    const j = Math.floor(Math.random() * jitterMs);
+    setTimeout(() => doVGSRead(), j);
+  } else {
+    doVGSRead();
+  }
+
+  function doVGSRead() {
+    const cmd = `VGS ${m} ${s} ${b}`;
+    const started = Date.now();
+    new Promise((resolve, reject) => enqueue(cmd, PRIORITY.NORMAL, resolve, reject, { type: 'VGS', m, s, b }))
+      .then(raw => {
+        const val = Number(String(raw).trim().split(/\s+/).pop());
+        const value = !!val;
+        VGS_CACHE.set(key, { ts: Date.now(), value, raw: String(val), bytes: String(raw).length });
+        const list = inflight.get(key) || [];
+        inflight.delete(key);
+        for (const { res, format } of list) {
+          if (format === 'bool') res.type('text/plain').send(value ? 'true' : 'false');
+          else res.json({ ok: true, sent: cmd, value, cached: false, ms: Date.now() - started });
+        }
+      })
+      .catch(err => {
+        const list = inflight.get(key) || [];
+        inflight.delete(key);
+        for (const { res } of list) res.status(500).json({ ok: false, error: String(err || 'VGS failed') });
+      });
+  }
+}
+
+// Primary status endpoint used by Homebridge HTTP-SWITCH accessories
+app.get('/status/vgs', serveVGS);
+
+>>>>>>> parent of 48c83c8 (Update app.js)
 // Manual reconnect helpers for the UI
 app.get('/connect', (req, res) => {
   try { socket.destroy(); } catch (e) {}
@@ -326,6 +462,7 @@ app.get('/disconnect', (req, res) => {
 });
 
 // Introspect the queued commands (for the UI)
+<<<<<<< HEAD
 // Commands: return items from commands.csv for UI; also expose queue at /commands/queue
 app.get('/commands', (req, res) => {
   const file = path.join(__dirname, 'commands.csv');
@@ -355,6 +492,9 @@ app.get('/commands', (req, res) => {
 });
 
 app.get('/commands/queue', (req, res) => {
+=======
+app.get('/commands', (req, res) => {
+>>>>>>> parent of 48c83c8 (Update app.js)
   res.json({ queue: QUEUE.map(q => ({ p: q.priority, cmd: q.cmd })), lastSendTs });
 });
 
