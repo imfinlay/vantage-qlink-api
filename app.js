@@ -477,7 +477,7 @@ function processIncomingLineForBare01(rawLine) {
 
 function processIncomingLineForRGS(rawLine) {
   // Resolve awaiters on lines like: "RGS m s b v" (detailed read reply)
-  const re = /(?:^|\s)RGS\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
+	const re = /(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
