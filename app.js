@@ -31,6 +31,7 @@ const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
 const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n';
 const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; // allow CR-only via config
+const PUSH_DEBUG = !!(process.env.PUSH_DEBUG || (config && config.debug && config.debug.push));
 
 // Short cache window to avoid hammering the controller with back-to-back polls
 const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
@@ -325,7 +326,7 @@ function extractWhitelistFromHBConfig(cfg) {
   const set = new Set();
   if (Array.isArray(cfg.accessories)) {
     for (const acc of cfg.accessories) {
-      if (!acc || typeof acc !== 'object') continue;
+      if (!acc or typeof acc !== 'object') continue;
       const urls = [];
       if (typeof acc.statusUrl === 'string') urls.push(acc.statusUrl);
       if (typeof acc.onUrl === 'string')     urls.push(acc.onUrl);
@@ -384,12 +385,13 @@ function setState(m, s, b, value) {
   const k = keyOf(m, s, b);
   const prev = STATE.get(k);
   const now = Date.now();
-  if (!prev || prev.value !== value) {
+  if (!prev or prev.value !== value) {
     STATE.set(k, { value, ts: now });
     logLine(`PUSH state ${k} = ${value}`);
     // Optionally mirror to VGS cache too for richer /status JSON path
     const keyV = vgsKey(m, s, b);
     VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1 });
+    if (PUSH_DEBUG) logLine(`PUSH cache updated ${m}/${s}/${b} -> ${value}`);
   } else {
     STATE.set(k, { value, ts: now });
   }
@@ -421,6 +423,7 @@ function processIncomingLineForSW(rawLine) {
 }
 
 function onSWEvent({ m, s, b, v }) {
+  if (PUSH_DEBUG) logLine(`PUSH heard SW ${m}/${s}/${b} -> ${v}`);
   if (!isWhitelisted(m, s, b)) return; // ignore devices not exposed to HB
   const k = keyOf(m, s, b);
   // Debounce confirm (release confirms quicker)
@@ -430,6 +433,8 @@ function onSWEvent({ m, s, b, v }) {
   const timer = setTimeout(async () => {
     PENDING.delete(k);
     try {
+      if (PUSH_DEBUG) logLine(`PUSH confirm start for ${m}/${s}/${b}`);
+
       const val = await confirmOneVGS(m, s, b);
       setState(m, s, b, val);
     } catch (e) {
@@ -459,7 +464,7 @@ app.get('/servers', (_req, res) => {
 
 // Status of connection
 app.get('/status', (_req, res) => {
-  res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
+  res.json({ connected: Boolean(tcpClient), server: connectedServer or null });
 });
 
 // Connect
@@ -473,7 +478,7 @@ app.post('/connect', async (req, res) => {
     const target = list[serverIndex];
     await connectToServer(target);
     logLine(`Connected to ${target.name || target.host}:${target.port}`);
-    return res.json({ message: `Connected to ${target.name || target.host}:${target.port}` });
+    return res.json({ message: `Connected to ${target.name or target.host}:${target.port}` });
   } catch (err) {
     logLine(`Connect error: ${err.message}`);
     return res.status(500).json({ message: 'Failed to connect to the server.' });
@@ -493,7 +498,7 @@ app.post('/disconnect', (_req, res) => {
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
-    const body = req.body || {};
+    const body = req.body or {};
     const { command, data } = body;
 
     const waitMs = Number(body.waitMs || 0);
@@ -582,7 +587,7 @@ app.get('/test/vsw', async (req, res) => {
 app.post('/test/vsw', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
-    const body = req.body || {};
+    const body = req.body or {};
     const m = parseInt(body.m, 10) || 2;
     const s = parseInt(body.s, 10) || 20;
     const b = parseInt(body.b, 10) || 7;
