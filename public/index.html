@@ -29,6 +29,12 @@
     .cat-rx { color: #2e7d32; }
     .cat-push { color: #6a1b9a; }
     .cat-error { color: #d32f2f; }
+    /* Pretty tokens */
+	.token { font-weight: 600; }
+	.arrow { color: #999; padding: 0 2px; }
+	.path, .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+	.addr { color: #777; }
+
     #log-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
   </style>
 </head>
@@ -213,7 +219,11 @@
       const t = await r.text();
       const el = document.getElementById('log-container');
       el.innerHTML = '';
-      const lines = t.split(/\r?\n/); /* fixed */ /* fixed split */
+	// Normalize newlines without regex, then split
+		let t2 = t;
+		while (t2.indexOf('\r\n') !== -1) t2 = t2.replace('\r\n', '\n');
+		while (t2.indexOf('\r')   !== -1) t2 = t2.replace('\r',   '\n');
+		const lines = t2.split('\n');
       for (const rawLine of lines) {
         if (!rawLine) continue;
         const { node } = renderLogLine(rawLine);
@@ -225,19 +235,96 @@
     }
   }
 
-  function renderLogLine(line){
-    var node = document.createElement('div');
-    node.className = 'logLine';
+function renderLogLine(line){
+  var node = document.createElement('div');
+  node.className = 'logLine';
 
-    var ts = '';
-    var rest = line;
-    if (line.length > 2 && line.charCodeAt(0) === 91) { // '['
-      var rb = line.indexOf(']');
-      if (rb > 0) {
-        ts = line.slice(1, rb);
-        rest = line.slice(rb + 1).trimStart();
+  // [timestamp] prefix
+  var ts = '';
+  var rest = line;
+  if (line.length > 1 && line.charAt(0) === '[') {
+    var rb = line.indexOf(']');
+    if (rb > 0) { ts = line.substring(1, rb); rest = line.substring(rb + 1); if (rest.charAt(0) === ' ') rest = rest.substring(1); }
+  }
+
+  var tsSpan = document.createElement('span');
+  tsSpan.className = 'ts';
+  tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
+  node.appendChild(tsSpan);
+
+  function add(cls, text) { var s = document.createElement('span'); s.className = cls; s.textContent = text; node.appendChild(s); return s; }
+  var done = false;
+
+  // HTTP METHOD PATH [from IP] -> payload
+  if (!done && rest.indexOf('HTTP ') === 0) {
+    var afterHttp = rest.substring(5); // skip 'HTTP '
+    var sp1 = afterHttp.indexOf(' ');
+    if (sp1 > 0) {
+      var method = afterHttp.substring(0, sp1);
+      var afterMethod = afterHttp.substring(sp1 + 1);
+      var sp2 = afterMethod.indexOf(' ');
+      var path = sp2 > -1 ? afterMethod.substring(0, sp2) : afterMethod;
+      var tail = sp2 > -1 ? afterMethod.substring(sp2 + 1) : '';
+      add('token cat-http', 'HTTP'); node.appendChild(document.createTextNode(' '));
+      add('token', method); node.appendChild(document.createTextNode(' '));
+      add('path', path);
+      var fromIdx = tail.toLowerCase().indexOf(' from ');
+      if (fromIdx !== -1) {
+        var afterFrom = tail.substring(fromIdx + 6);
+        var spaceAfterIp = afterFrom.indexOf(' ');
+        var ip = spaceAfterIp === -1 ? afterFrom : afterFrom.substring(0, spaceAfterIp);
+        node.appendChild(document.createTextNode(' ')); add('addr', 'from ' + ip);
+        tail = tail.substring(0, fromIdx) + tail.substring(fromIdx + 6 + ip.length);
       }
+      var arrowIdx = tail.indexOf('->');
+      if (arrowIdx !== -1) {
+        var payload = tail.substring(arrowIdx + 2).trim();
+        node.appendChild(document.createTextNode(' ')); add('arrow', '→'); node.appendChild(document.createTextNode(' ')); add('code', payload);
+      }
+      done = true;
     }
+  }
+
+  // CMD or CMD/API -> payload
+  if (!done && (rest.indexOf('CMD ') === 0 || rest.indexOf('CMD/') === 0)) {
+    var arrow = rest.indexOf('->');
+    var payload2 = arrow !== -1 ? rest.substring(arrow + 2).trim() : rest;
+    add('token cat-cmd', 'CMD'); node.appendChild(document.createTextNode(' ')); add('arrow', '→'); node.appendChild(document.createTextNode(' ')); add('code', payload2);
+    done = true;
+  }
+
+  // RX <- payload
+  if (!done && rest.indexOf('RX ') === 0) {
+    var arr = rest.split('<-');
+    if (arr.length > 1) {
+      var payload3 = arr.slice(1).join('<-').trim();
+      add('token cat-rx', 'RX'); node.appendChild(document.createTextNode(' ')); add('arrow', '←'); node.appendChild(document.createTextNode(' ')); add('code', payload3);
+      done = true;
+    }
+  }
+
+  // PUSH ...
+  if (!done) {
+    var low = rest.toLowerCase();
+    if (low.indexOf('push') !== -1) {
+      add('token cat-push', 'PUSH'); node.appendChild(document.createTextNode(' ')); add('code', rest.replace(/^push\s+/i, ''));
+      done = true;
+    }
+  }
+
+  // error ...
+  if (!done) {
+    var low2 = rest.toLowerCase();
+    if (low2.indexOf('error') !== -1) {
+      add('token cat-error', 'ERROR'); node.appendChild(document.createTextNode(' ')); add('code', rest.replace(/^error\s*:?\s*/i, ''));
+      done = true;
+    }
+  }
+
+  if (!done) { var body = document.createElement('span'); body.textContent = rest; node.appendChild(body); }
+  return { node: node };
+}
+
 
     var tsSpan = document.createElement('span');
     tsSpan.className = 'ts';
