@@ -1,7 +1,7 @@
 'use strict';
 
 // =========================================================
-// app.js (Queued send + VGS coalesce/cache + priority + jitter)
+// app.js (Queued send + VGS coalesce/cache + priority + jitter + HB whitelist + VOS push)
 // - Serves /public (index.html)
 // - HTTP -> TCP bridge with connect/disconnect/send
 // - /commands  : expose commands.csv (rich)
@@ -15,7 +15,8 @@
 //     * (default)   -> JSON { ok, sent, state, raw, bytes, cached? }
 // - Logs API-originated commands and HTTP polling attempts
 // - Serializes TCP I/O to prevent mixed replies + short cache & coalescing for VGS
-// - NEW: Global min inter-command gap (MIN_GAP_MS), priority queue, jitter, cacheMs param
+// - Global min inter-command gap (MIN_GAP_MS), priority queue, jitter, cacheMs param
+// - NEW: Homebridge-driven whitelist + VOS (SW m s b v) event ingest -> one-shot VGS confirm + state cache
 // =========================================================
 
 const path = require('path');
@@ -33,7 +34,7 @@ const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n
 
 // Short cache window to avoid hammering the controller with back-to-back polls
 const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
-// NEW: global minimum spacing between *any* on-wire sends (in ms)
+// Global minimum spacing between *any* on-wire sends (in ms)
 const MIN_GAP_MS = Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120);
 
 try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
@@ -57,11 +58,15 @@ function appendRecv(buf) {
     if (RECV_BUFFER.length > MAX_RECV_BYTES) {
       RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - MAX_RECV_BYTES);
     }
+    // Logging preview
     const preview = buf.toString('utf8').replace(/\r?\n/g, ' ').slice(0, 200);
     if (preview) logLine(`RX <- ${preview}`);
+
+    // Feed event line parser
+    processIncomingText(buf.toString('utf8'));
   } catch (_) {}
 }
-function resetRecv() { RECV_BUFFER = Buffer.alloc(0); }
+function resetRecv() { RECV_BUFFER = Buffer.alloc(0); INCOMING_TEXT_BUF = ''; }
 
 // -------------------------------
 // Middleware
@@ -223,7 +228,7 @@ async function waitQuiet(startLen, quietMs, maxMs) {
 }
 
 // -------------------------------
-// ** NEW: Priority queue for on-wire sends + global min gap **
+// Priority queue for on-wire sends + global min gap
 // -------------------------------
 let __queue = []; // items: { fn, priority, resolve, reject, label, enqueuedAt }
 let __pumping = false;
@@ -261,10 +266,8 @@ async function pumpQueue(){
   }
 }
 
-// Back-compat wrapper: preserves any existing calls to runInTcpQueue
-function runInTcpQueue(task) {
-  return runQueued(task, { priority: 0 });
-}
+// Back-compat wrapper
+function runInTcpQueue(task) { return runQueued(task, { priority: 0 }); }
 
 // Helper: send + collect using quietMs/maxMs inside the queue
 function sendAndCollect(cmd, { quietMs = 200, maxMs = 1200, priority = 0 } = {}) {
@@ -276,11 +279,173 @@ function sendAndCollect(cmd, { quietMs = 200, maxMs = 1200, priority = 0 } = {})
 }
 
 // -------------------------------
-// ** VGS cache + in-flight coalescing **
+// VGS cache + in-flight coalescing
 // -------------------------------
 const VGS_CACHE = new Map(); // key -> { ts, value, raw, bytes }
 const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
+
+// -------------------------------
+// NEW: Homebridge-driven whitelist + VOS push ingest
+// -------------------------------
+let HB_CONFIG_PATH = null;
+let WHITELIST = new Set();
+let WHITELIST_MTIME = null;
+
+const STATE = new Map();        // key "m/s/b" -> { value, ts }
+const PENDING = new Map();      // key -> timeoutId
+const DEBOUNCE_MS = 250;        // debounce SW bursts per device
+let INCOMING_TEXT_BUF = '';
+
+function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
+
+function detectHBConfigPath() {
+  if (process.env.HB_CONFIG_PATH && fs.existsSync(process.env.HB_CONFIG_PATH)) return process.env.HB_CONFIG_PATH;
+  const candidates = [
+    '/var/lib/homebridge/config.json',
+    '/home/homeauto/.homebridge/config.json',
+    '/home/imfinlay/.homebridge/config.json'
+  ];
+  for (const p of candidates) { try { if (fs.existsSync(p)) return p; } catch (_) {} }
+  return null;
+}
+
+function parseTripletFromUrl(u) {
+  try {
+    const url = new URL(u, 'http://localhost');
+    const m = Number(url.searchParams.get('m'));
+    const s = Number(url.searchParams.get('s'));
+    const b = Number(url.searchParams.get('b'));
+    if ([m,s,b].every(n => Number.isFinite(n))) return keyOf(m,s,b);
+  } catch (_) {}
+  return null;
+}
+
+function extractWhitelistFromHBConfig(cfg) {
+  const set = new Set();
+  if (Array.isArray(cfg.accessories)) {
+    for (const acc of cfg.accessories) {
+      if (!acc || typeof acc !== 'object') continue;
+      const urls = [];
+      if (typeof acc.statusUrl === 'string') urls.push(acc.statusUrl);
+      if (typeof acc.onUrl === 'string')     urls.push(acc.onUrl);
+      if (typeof acc.offUrl === 'string')    urls.push(acc.offUrl);
+      for (const u of urls) { const k = parseTripletFromUrl(u); if (k) set.add(k); }
+    }
+  }
+  if (Array.isArray(cfg.platforms)) {
+    for (const p of cfg.platforms) {
+      if (!p || typeof p !== 'object') continue;
+      const items = Array.isArray(p.accessories) ? p.accessories : (Array.isArray(p.devices) ? p.devices : null);
+      if (!items) continue;
+      for (const it of items) {
+        if (!it || typeof it !== 'object') continue;
+        const urls = [];
+        if (typeof it.statusUrl === 'string') urls.push(it.statusUrl);
+        if (typeof it.onUrl === 'string')     urls.push(it.onUrl);
+        if (typeof it.offUrl === 'string')    urls.push(it.offUrl);
+        for (const u of urls) { const k = parseTripletFromUrl(u); if (k) set.add(k); }
+      }
+    }
+  }
+  return set;
+}
+
+function loadWhitelistFromHomebridgeSync() {
+  try {
+    HB_CONFIG_PATH = detectHBConfigPath();
+    if (!HB_CONFIG_PATH) {
+      WHITELIST = new Set();
+      WHITELIST_MTIME = null;
+      logLine('[WL/HB] no Homebridge config.json found; whitelist empty');
+      return;
+    }
+    const stat = fs.statSync(HB_CONFIG_PATH);
+    const raw  = fs.readFileSync(HB_CONFIG_PATH, 'utf8');
+    const cfg  = JSON.parse(raw);
+    const set  = extractWhitelistFromHBConfig(cfg);
+    WHITELIST = set;
+    WHITELIST_MTIME = stat.mtime.toISOString();
+    logLine(`[WL/HB] loaded ${WHITELIST.size} devices from ${HB_CONFIG_PATH}`);
+  } catch (e) {
+    logLine(`[WL/HB] load failed: ${e.message}`);
+    WHITELIST = new Set();
+    WHITELIST_MTIME = null;
+  }
+}
+
+function isWhitelisted(m, s, b) {
+  // Empty whitelist means "deny all" for safety; change to `return true` if you prefer allow-all
+  if (WHITELIST.size === 0) return false;
+  return WHITELIST.has(keyOf(m, s, b));
+}
+
+function setState(m, s, b, value) {
+  const k = keyOf(m, s, b);
+  const prev = STATE.get(k);
+  const now = Date.now();
+  if (!prev || prev.value !== value) {
+    STATE.set(k, { value, ts: now });
+    logLine(`PUSH state ${k} = ${value}`);
+    // Optionally mirror to VGS cache too for richer /status JSON path
+    const keyV = vgsKey(m, s, b);
+    VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1 });
+  } else {
+    STATE.set(k, { value, ts: now });
+  }
+}
+
+function processIncomingText(chunkUtf8) {
+  INCOMING_TEXT_BUF += chunkUtf8;
+  // split on CR or LF boundaries
+  let idx;
+  while ((idx = INCOMING_TEXT_BUF.search(/[\r\n]/)) >= 0) {
+    // consume through the first newline char, also drop a following \n if this was \r\n
+    let line = INCOMING_TEXT_BUF.slice(0, idx);
+    let rest = INCOMING_TEXT_BUF.slice(idx + 1);
+    if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
+    INCOMING_TEXT_BUF = rest;
+    if (line.length) processIncomingLineForSW(line);
+  }
+  // If no newline present, keep accumulating.
+}
+
+function processIncomingLineForSW(rawLine) {
+  // Matches multiple tokens on one line: "SW m s b v"
+  const re = /(?:^|\s)SW\s+(\d+)\s+(\d+)\s+(\d+)\s+([01])\b/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) {
+    const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
+    onSWEvent({ m: M, s: S, b: B, v: V });
+  }
+}
+
+function onSWEvent({ m, s, b, v }) {
+  if (!isWhitelisted(m, s, b)) return; // ignore devices not exposed to HB
+  const k = keyOf(m, s, b);
+  // Debounce confirm (release confirms quicker)
+  const existing = PENDING.get(k);
+  if (existing) clearTimeout(existing);
+  const delay = (v === 0) ? 60 : DEBOUNCE_MS;
+  const timer = setTimeout(async () => {
+    PENDING.delete(k);
+    try {
+      const val = await confirmOneVGS(m, s, b);
+      setState(m, s, b, val);
+    } catch (e) {
+      logLine(`VOS->VGS confirm failed for ${k}: ${e.message}`);
+    }
+  }, delay);
+  PENDING.set(k, timer);
+}
+
+async function confirmOneVGS(m, s, b) {
+  const cmd = `VGS ${m} ${s} ${b}`;
+  const buf = await sendAndCollect(cmd, { quietMs: 300, maxMs: 2000, priority: 6 });
+  const raw = buf.toString('utf8').trim();
+  const m01 = raw.match(/\b([01])\b/);
+  return m01 ? Number(m01[1]) : 0;
+}
 
 // -------------------------------
 // API
@@ -352,26 +517,23 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
 
-	// Run send + wait INSIDE the queue so nothing else interleaves
-	const uiPriority = 5; // higher than status polls (0), lower than control bursts (10)
-	const buf = await runQueued(async () => {
-	  const startLen = RECV_BUFFER.length;
-	
-	  if (typeof command === 'string' && command.trim()) {
-		// log + append NL like before
-		await sendCmdLogged(command.trim());
-	  } else {
-		await sendToTCP(payload);
-	  }
-	
-	  if (quietMs > 0) {
-		return await waitQuiet(startLen, quietMs, maxMs);
-	  } else if (waitMs > 0) {
-		await sleep(waitMs);
-		return RECV_BUFFER.slice(startLen);
-	  }
-	  return Buffer.alloc(0);
-	}, { priority: uiPriority, label: 'UI/send' });
+    // Run send + wait INSIDE the queue so nothing else interleaves
+    const uiPriority = 5; // higher than status polls (0), lower than control bursts (10)
+    const buf = await runQueued(async () => {
+      const startLen = RECV_BUFFER.length;
+      if (typeof command === 'string' && command.trim()) {
+        await sendCmdLogged(command.trim());
+      } else {
+        await sendToTCP(payload);
+      }
+      if (quietMs > 0) {
+        return await waitQuiet(startLen, quietMs, maxMs);
+      } else if (waitMs > 0) {
+        await sleep(waitMs);
+        return RECV_BUFFER.slice(startLen);
+      }
+      return Buffer.alloc(0);
+    }, { priority: uiPriority, label: 'UI/send' });
 
     const response = (waitMs > 0 || quietMs > 0) ? {
       bytes: buf.length,
@@ -473,7 +635,17 @@ app.get('/status/vgs', async (req, res) => {
     const now = Date.now();
     const fmt = String(req.query.format || '').toLowerCase();
 
-    // Serve fresh cache immediately
+    // FAST PATH: serve from push STATE if fresh (10s)
+    const kState = keyOf(m, s, b);
+    const st = STATE.get(kState);
+    if (st && (now - st.ts) < 10_000) {
+      const value = st.value;
+      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
+      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
+      return res.json({ ok:true, sent: `(push-cache) ${cmd}`, state: value, raw: String(value), bytes: 1, cached: true });
+    }
+
+    // Serve fresh VGS cache immediately
     const cached = VGS_CACHE.get(key);
     if (cached && (now - cached.ts) < cacheMs) {
       const value = cached.value;
@@ -532,6 +704,21 @@ app.post('/admin/reload-commands', (_req, res) => {
   res.json({ message: 'Commands reloaded', count });
 });
 
+// Whitelist visibility + reload (Homebridge-driven)
+app.get('/whitelist', (_req, res) => {
+  res.json({
+    source: 'homebridge',
+    path: HB_CONFIG_PATH,
+    count: WHITELIST.size,
+    mtime: WHITELIST_MTIME,
+    devices: Array.from(WHITELIST).sort()
+  });
+});
+app.post('/whitelist/reload', (_req, res) => {
+  loadWhitelistFromHomebridgeSync();
+  res.json({ message: 'reloaded', count: WHITELIST.size, mtime: WHITELIST_MTIME });
+});
+
 // Logs tail
 app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
@@ -557,7 +744,20 @@ app.get('/recv', (req, res) => {
 // SPA fallback (optional)
 // -------------------------------
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/send') || req.path.startsWith('/connect') || req.path.startsWith('/disconnect') || req.path.startsWith('/status') || req.path.startsWith('/servers') || req.path.startsWith('/commands') || req.path.startsWith('/logs') || req.path.startsWith('/recv') || req.path.startsWith('/admin') || req.path.startsWith('/test')) {
+  if (
+    req.path.startsWith('/api/') ||
+    req.path.startsWith('/send') ||
+    req.path.startsWith('/connect') ||
+    req.path.startsWith('/disconnect') ||
+    req.path.startsWith('/status') ||
+    req.path.startsWith('/servers') ||
+    req.path.startsWith('/commands') ||
+    req.path.startsWith('/logs') ||
+    req.path.startsWith('/recv') ||
+    req.path.startsWith('/admin') ||
+    req.path.startsWith('/test') ||
+    req.path.startsWith('/whitelist')
+  ) {
     return next();
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
@@ -570,6 +770,9 @@ app.get('*', (req, res, next) => {
 // -------------------------------
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Load HB whitelist on boot
+loadWhitelistFromHomebridgeSync();
 
 if (require.main === module) {
   app.listen(PORT, HOST, () => {
