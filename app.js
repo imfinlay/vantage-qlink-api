@@ -286,6 +286,24 @@ const VGS_CACHE = new Map(); // key -> { ts, value, raw, bytes }
 const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
+// Awaiters: allow parallel VGS requests without holding the queue
+const AWAITERS = new Map(); // key -> [{resolve,reject,timeout}]
+function awaitVGS(m, s, b, timeoutMs) {
+  const key = vgsKey(m, s, b);
+  return new Promise((resolve, reject) => {
+    const list = AWAITERS.get(key) || [];
+    const to = setTimeout(() => {
+      try {
+        const arr = AWAITERS.get(key) || [];
+        AWAITERS.set(key, arr.filter(x => x.resolve !== resolve));
+      } catch (_) {}
+      reject(new Error('VGS timeout'));
+    }, Math.max(50, timeoutMs || 2000));
+    list.push({ resolve, reject, timeout: to });
+    AWAITERS.set(key, list);
+  });
+}
+
 // -------------------------------
 // NEW: Homebridge-driven whitelist + VOS push ingest
 // -------------------------------
@@ -407,7 +425,7 @@ function processIncomingText(chunkUtf8) {
     let rest = INCOMING_TEXT_BUF.slice(idx + 1);
     if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     INCOMING_TEXT_BUF = rest;
-    if (line.length) processIncomingLineForSW(line);
+    if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); }
   }
   // If no newline present, keep accumulating.
 }
@@ -419,6 +437,24 @@ function processIncomingLineForSW(rawLine) {
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     onSWEvent({ m: M, s: S, b: B, v: V });
+  }
+}
+
+function processIncomingLineForVGS(rawLine) {
+  // Resolve awaiters on lines like: "VGS m s b v"
+  const re = /(?:^|\s)VGS\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) {
+    const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
+    const key = vgsKey(M, S, B);
+    VGS_CACHE.set(key, { ts: Date.now(), value: !!V, raw: String(V), bytes: String(rawLine).length });
+    const list = AWAITERS.get(key);
+    if (list && list.length) {
+      AWAITERS.delete(key);
+      for (const entry of list) {
+        try { clearTimeout(entry.timeout); entry.resolve(rawLine); } catch (_) {}
+      }
+    }
   }
 }
 
@@ -671,13 +707,16 @@ app.get('/status/vgs', async (req, res) => {
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
       if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-      const buf = await sendAndCollect(cmd, { quietMs, maxMs, priority: 0 });
-      const raw = buf.toString('utf8').trim();
-      const m01 = raw.match(/\b([01])\b/);
+      // Register waiter before sending so we don't miss the reply
+      const respP = awaitVGS(m, s, b, maxMs);
+      // Only the write is serialized; we don't block the queue while waiting
+      await runQueued(async () => { await sendCmdLogged(cmd); }, { priority: 0, label: cmd });
+      const raw = await respP;
+      const m01 = String(raw).match(/\b([01])\b/);
       const value = m01 ? Number(m01[1]) : null;
-      const rec = { ts: Date.now(), value, raw, bytes: buf.length };
+      const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
       VGS_CACHE.set(key, rec);
-      return { value, raw, bytes: buf.length };
+      return { value, raw: String(raw), bytes: String(raw).length };
     })();
 
     VGS_INFLIGHT.set(key, p);
