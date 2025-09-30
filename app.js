@@ -179,6 +179,17 @@ function connectToServer(target) {
   });
 }
 
+function sendFormatted(res, format, value, raw) {
+  if (format === 'bool') {
+    const out = value ? 'true' : 'false';
+    return res.status(200).type('text/plain').send(out);
+  }
+  if (format === 'raw') {
+    return res.status(200).type('text/plain').send(raw != null ? String(raw) : '');
+  }
+  return res.status(200).json({ ok: true, value, raw });
+}
+
 function sendToTCP(data) {
   return new Promise((resolve, reject) => {
     if (!tcpClient) return reject(new Error('Not connected'));
@@ -800,9 +811,29 @@ app.get('/status/vgs', async (req, res) => {
 
     return res.json({ ok:true, sent: cmd, state: out.value, raw: out.raw, bytes: out.bytes });
   } catch (err) {
-    logLine(`VGS status error: ${err.message}`);
-    return res.status(500).json({ ok:false, message: 'VGS status failed.' });
-  }
+	  logLine(`VGS status error: ${err && err.message ? err.message : String(err)}`);
+	  const format = String((req.query && req.query.format) || '').toLowerCase();
+	
+	  // Try stale cache
+	  const mm = parseInt(req.query.m, 10);
+	  const ss = parseInt(req.query.s, 10);
+	  const bb = parseInt(req.query.b, 10);
+	  if (Number.isFinite(mm) && Number.isFinite(ss) && Number.isFinite(bb)) {
+		const k = vgsKey(mm, ss, bb);
+		const stale = VGS_CACHE.get(k);
+		if (stale) {
+		  res.setHeader('X-Status-Fallback', 'stale-cache');
+		  return sendFormatted(res, format, stale.value, stale.raw);
+		}
+	  }
+	
+	  // Last resort: keep HB happy for format=bool
+	  res.setHeader('X-Status-Error', err && err.message ? err.message : 'error');
+	  if (format === 'bool') return sendFormatted(res, 'bool', 0, null);
+	
+	  return res.status(500).json({ ok:false, message: 'VGS status failed.' });
+	}
+
 });
 
 // Commands (rich + legacy)
@@ -840,8 +871,13 @@ app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
   const lines = tailFile(LOG_FILE_PATH, limit);
+
+  if (String(req.query.format || '').toLowerCase() === 'txt') {
+    return res.type('text/plain').send(lines.join('\n'));
+  }
   res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
+
 
 // Recent TCP receive buffer
 app.get('/recv', (req, res) => {
