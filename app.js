@@ -326,7 +326,7 @@ function extractWhitelistFromHBConfig(cfg) {
   const set = new Set();
   if (Array.isArray(cfg.accessories)) {
     for (const acc of cfg.accessories) {
-      if (!acc or typeof acc !== 'object') continue;
+      if (!acc || typeof acc !== 'object') continue;
       const urls = [];
       if (typeof acc.statusUrl === 'string') urls.push(acc.statusUrl);
       if (typeof acc.onUrl === 'string')     urls.push(acc.onUrl);
@@ -385,7 +385,7 @@ function setState(m, s, b, value) {
   const k = keyOf(m, s, b);
   const prev = STATE.get(k);
   const now = Date.now();
-  if (!prev or prev.value !== value) {
+  if (!prev || prev.value !== value) {
     STATE.set(k, { value, ts: now });
     logLine(`PUSH state ${k} = ${value}`);
     // Optionally mirror to VGS cache too for richer /status JSON path
@@ -464,7 +464,7 @@ app.get('/servers', (_req, res) => {
 
 // Status of connection
 app.get('/status', (_req, res) => {
-  res.json({ connected: Boolean(tcpClient), server: connectedServer or null });
+  res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
 });
 
 // Connect
@@ -478,7 +478,7 @@ app.post('/connect', async (req, res) => {
     const target = list[serverIndex];
     await connectToServer(target);
     logLine(`Connected to ${target.name || target.host}:${target.port}`);
-    return res.json({ message: `Connected to ${target.name or target.host}:${target.port}` });
+    return res.json({ message: `Connected to ${target.name || target.host}:${target.port}` });
   } catch (err) {
     logLine(`Connect error: ${err.message}`);
     return res.status(500).json({ message: 'Failed to connect to the server.' });
@@ -498,7 +498,7 @@ app.post('/disconnect', (_req, res) => {
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
-    const body = req.body or {};
+    const body = req.body || {};
     const { command, data } = body;
 
     const waitMs = Number(body.waitMs || 0);
@@ -587,7 +587,7 @@ app.get('/test/vsw', async (req, res) => {
 app.post('/test/vsw', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
-    const body = req.body or {};
+    const body = req.body || {};
     const m = parseInt(body.m, 10) || 2;
     const s = parseInt(body.s, 10) || 20;
     const b = parseInt(body.b, 10) || 7;
