@@ -26,7 +26,7 @@ VLS,Return the current state of a switch LED.,<master> <station> <led>
 VLT,Return the current state of each of the switch LEDs for the specified station.,<master> <station> <format>
 VOD,Setup the system to output RS-232 strings when a station LED changes.,<master> <format> <enable>
 VOL,Set up the system to output RS-232 strings when loads change.,<master> <format> <enable>
-VOS,Set up the system to output RS-232 strings when a station switch or infrared button is pressed or released.,<master> <format> <enable>
+VOS,Set up the system to output RS-232 strings when a station switch or infrared button is pressed or released.,<format> <enable>
 VPG,Program the system using QLink .qlk file format strings.,<string>
 VQA,Returns the address and port number of the master controller that has the current RS-232 port.,
 VQM,Query the system for master controllers.,
