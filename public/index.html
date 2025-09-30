@@ -213,13 +213,16 @@
       const t = await r.text();
       const el = document.getElementById('log-container');
       el.innerHTML = '';
-      const lines = t.split(/?
-/);
+      const lines = t.split(/\r?\n/);
       for (const rawLine of lines) {
         if (!rawLine) continue;
         const { node } = renderLogLine(rawLine);
         el.appendChild(node);
       }
+      autoScrollIfNeeded();
+    } catch (e) {
+      clientLog('log fetch failed: ' + e.message);
+    }
   }
 
   function renderLogLine(line){
