@@ -213,7 +213,7 @@
       const t = await r.text();
       const el = document.getElementById('log-container');
       el.innerHTML = '';
-      const lines = t.split(/\r?\n/); /* fixed split */
+      const lines = t.split(/\r?\n/); /* fixed */ /* fixed split */
       for (const rawLine of lines) {
         if (!rawLine) continue;
         const { node } = renderLogLine(rawLine);
@@ -258,7 +258,7 @@
     body.className = 'cat-' + (cls || 'plain');
     node.appendChild(body);
     return { node: node };
-  
+  }
 
   let tailTimer = null;
   function autoScrollIfNeeded(){
