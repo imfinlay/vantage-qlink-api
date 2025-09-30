@@ -65,8 +65,6 @@
       <label>maxMs <input id="max-ms" type="number" min="0" value="2000" /></label>
     </div>
 
-    </div>
-
   </div>
 
   <div class="card">
@@ -210,24 +208,18 @@
 
   async function doLogFetchOnce(){
     try {
-      var limit = Number(document.getElementById('log-limit').value || 200);
-      var r = await fetch('/logs?limit=' + limit + '&format=txt');
-      var t = await r.text();
-      var el = document.getElementById('log-container');
+      const limit = Number(document.getElementById('log-limit').value || 200);
+      const r = await fetch(`/logs?limit=${limit}&format=txt`);
+      const t = await r.text();
+      const el = document.getElementById('log-container');
       el.innerHTML = '';
-      var lines = t.split('
-');
-      for (var i = 0; i < lines.length; i++) {
-        var raw = lines[i];
-        if (!raw) continue;
-        if (raw.charCodeAt(raw.length - 1) === 13) raw = raw.slice(0, -1); // trim CR
-        var out = renderLogLine(raw);
-        el.appendChild(out.node);
+      const lines = t.split(/?
+/);
+      for (const rawLine of lines) {
+        if (!rawLine) continue;
+        const { node } = renderLogLine(rawLine);
+        el.appendChild(node);
       }
-      autoScrollIfNeeded();
-    } catch (e) {
-      clientLog('log fetch failed: ' + e.message);
-    }
   }
 
   function renderLogLine(line){
@@ -287,20 +279,7 @@
 
   function clearLogView(){ document.getElementById('log-container').textContent = ''; }
 
-  async function refreshRecv() {
-    try {
-      const limit = Number(document.getElementById('display-limit').value || 2048);
-      const mode  = document.getElementById('display-encoding').value || 'text';
-      const r = await getJSON(`/recv?limitBytes=${limit}&encoding=${mode}`);
-      const el = document.getElementById('recv-container');
-      el.textContent = `len=${r.length}, encoding=${r.encoding}\n` + r.data;
-    } catch (e) {
-      clientLog('recv fetch failed: ' + e.message);
-    }
-  }
-  function clearRecv(){ const el = document.getElementById('recv-container'); el.textContent = ''; }
-
-  async function populateCommands(){
+    async function populateCommands(){
     try {
       const data = await getJSON('/commands');
       const items = data.items || [];
