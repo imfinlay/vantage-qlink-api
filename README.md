@@ -44,7 +44,7 @@
 ```
 Homebridge (HTTP‑SWITCH) ─┐           ┌─> /public/index.html (UI)
                           ├─> REST API│
-Other clients (curl etc.) ┘           └─> TCP bridge ──> Vantage
+Other clients (curl etc.) ┘           └─> TCP bridge ──> Vantage IP interface --> Vantage serial interface
 ```
 
 Key pieces:
@@ -56,6 +56,7 @@ Key pieces:
 
 ## Requirements
 
+* Vantage Qlink master controller with an IP interface
 * Raspberry Pi (Linux) with network access to the Vantage controller
 * Node.js **v22.20.0** (via nvm is fine)
 * PM2 for process management (optional but recommended)
@@ -70,23 +71,23 @@ nvm install 22.20.0
 nvm use 22.20.0
 
 # 2) Clone & install
-git clone https://github.com/<you>/vantage-qlink-api.git
+git clone https://github.com/imfinlay/vantage-qlink-api.git
 cd vantage-qlink-api
 npm install
 ```
 
 ## Configure
 
-Configuration lives in `config.js` (checked into the repo, or provide via env).
+Configuration lives in `config.js` (a sample is checked into the repo).
 
 **Servers** (multiple supported):
 
 ```js
 module.exports = {
   SERVERS: [
-    { name: 'Vantage', host: '10.101.111.70', port: 3040 }
+    { name: 'Vantage', host: '<IP address>', port: 3040 }
   ],
-  // Optional TCP handshake string sent on connect
+  // Optional TCP handshake string sent on connect - depending on your Qlink config you may need to send VOS 0 1/n to enable reporting of switch presses. This is persistent in the Qlink master, so you don't actually need to send it every time, but it doesn't hurt! You may also need to change the CRLF behaviour in your environment with VCL 1. If you have the Qlink config program, you can set all this in the RS-232 station config. 
   HANDSHAKE: '',
 
   // Timing & behavior
@@ -227,8 +228,8 @@ All endpoints are `GET` unless noted.
 
 **Protocol details**
 
-* Sends `VGS# m s b`
-* Accepts `RGS# m s b v` or `VGS# m s b v` (or bare `0|1`)
+* Sends `VGS# m s b` - this is the 'Get Switch' v-command, detailed response (the #) sending master, station and switch (button, if you like)
+* Accepts `RGS# m s b v` or `VGS# m s b v` (or bare `0|1`) - this is the detailed response to VGS#
 * The **last field** is treated as the boolean state (non‑zero = `1`)
 
 ### Receive buffer (debug)
@@ -262,6 +263,7 @@ Open `http://<pi>:3000/`:
 ## Homebridge integration
 
 Using the community **HTTP‑SWITCH** accessory:
+* Get master, station and switch/button IDs from the Qlink program or by pressing buttons and watching the logs in the HTML front end
 
 ```json
 {
