@@ -1,95 +1,58 @@
 'use strict';
 
-/**
- * @file Vantage QLink API bridge
- *
- * Serves a small HTTP API and static UI to interact with a Vantage QLink controller over TCP.
- *
- * Features:
- * - Serves `/public/index.html`
- * - HTTP → TCP bridge with `/connect`, `/disconnect`, `/send`
- * - `/commands`  : expose `commands.csv` (rich list)
- * - `/logs`      : tail the app log (non-blocking stream + in‑memory ring)
- * - `/recv`      : show recent TCP bytes (utf8/hex/base64)
- * - `/test/vsw`  : trigger a VSW press/release
- * - `/status/vgs`: poll switch state via `VGS# <m> <s> <b>`; parses `RGS#` / `VGS#` replies and bare `0|1`
- *   - `format=raw`  → text/plain `0` or `1` (empty if unknown)
- *   - `format=bool` → text/plain `true` or `false` (empty if unknown)
- *   - default JSON  → `{ ok, sent, state, raw, bytes, cached? }`
- *
- * Runtime behavior:
- * - Serialized TCP I/O (global `MIN_GAP_MS`), VGS coalescing, short cache window
- * - Homebridge-driven whitelist; VOS `SW m s b v` push → one‑shot `VGS#` confirm → state cache
- */
-
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const express = require('express');
 const os = require('os');
 
-// -------------------------------
-// Configuration
-// -------------------------------
 const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
 const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n';
-const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; // allow CR-only via config
+const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; 
 const PUSH_DEBUG = !!(process.env.PUSH_DEBUG || (config && config.debug && config.debug.push));
 
-// Short cache window to avoid hammering the controller with back-to-back polls
 const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
-// Global minimum spacing between *any* on-wire sends (in ms)
+
 const MIN_GAP_MS = Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120);
-// Protocol correctness knobs
+
 const PUSH_FRESH_MS = Number(config.PUSH_FRESH_MS || process.env.PUSH_FRESH_MS || 10000);
 const HB_WHITELIST_STRICT = (config && Object.prototype.hasOwnProperty.call(config, 'HB_WHITELIST_STRICT')) ? !!config.HB_WHITELIST_STRICT : true;
 const HANDSHAKE_RETRY_MS = Number(config.HANDSHAKE_RETRY_MS || process.env.HANDSHAKE_RETRY_MS || 0);
 
 try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
-// -------------------------------
-// Globals
-// -------------------------------
 const app = express();
 app.disable('x-powered-by');
 
-let tcpClient = null;       // active net.Socket
-let connectedServer = null; // { name, host, port }
+let tcpClient = null;       
+let connectedServer = null; 
 
-// Recent TCP bytes buffer for /recv and send responses
-const MAX_RECV_BYTES = 32768; // 32KB ring
+const MAX_RECV_BYTES = 32768; 
 let RECV_BUFFER = Buffer.alloc(0);
 function appendRecv(buf) {
   try {
     if (!Buffer.isBuffer(buf)) buf = Buffer.from(String(buf));
-    // Pre-trim to avoid oversized intermediate buffers on concat
+
     if (RECV_BUFFER.length + buf.length > MAX_RECV_BYTES) {
       const keep = Math.max(0, MAX_RECV_BYTES - buf.length);
       if (keep < RECV_BUFFER.length) RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - keep);
     }
     RECV_BUFFER = Buffer.concat([RECV_BUFFER, buf]);
-    // One decode for both preview and parser
+
     const text = buf.toString('utf8');
     const preview = text.replace(/\r?\n/g, ' ').slice(0, 200);
     if (preview) logLine(`RX <- ${preview}`);
-    // Feed event line parser
+
     processIncomingText(text);
   } catch (_) {}
 }
 function resetRecv() { RECV_BUFFER = Buffer.alloc(0); INCOMING_TEXT_BUF = ''; }
 
-// -------------------------------
-// Middleware
-// -------------------------------
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
-// -------------------------------
-// Logging helpers
-// -------------------------------
-// Perf: switch to a non-blocking log stream + in-memory ring buffer for quick /logs tail
 const LOG_RING_MAX = Number(process.env.LOG_RING_MAX || (config && config.LOG_RING_MAX) || 2000);
 let LOG_RING = [];
 let _logStream = null;
@@ -117,12 +80,12 @@ function _openLogStream() {
 _openLogStream();
 function logLine(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
-  // In-memory ring for fast /logs
+
   try {
     LOG_RING.push(line.endsWith('\n') ? line.slice(0, -1) : line);
     if (LOG_RING.length > LOG_RING_MAX) LOG_RING.splice(0, LOG_RING.length - LOG_RING_MAX);
   } catch (_) {}
-  // Stream to disk without blocking the event loop
+
   try {
     if (!_logStream) _openLogStream();
     if (_logStream) {
@@ -132,7 +95,7 @@ function logLine(msg) {
         _logQueue.push(line);
       }
     } else {
-      // Fallback (non-throwing): async append
+
       fs.appendFile(LOG_FILE_PATH, line, () => {});
     }
   } catch (_) {
@@ -151,15 +114,12 @@ function logHttp(req, msg){
 }
 
 function toOn(v) {
-  // Normalize mixed types to a boolean ON
+
   return v === 1 || v === true || v === '1';
 }
 
-// -------------------------------
-// Commands.csv parsing & validation (rich)
-// -------------------------------
 const VALID_COMMANDS = new Set();
-let COMMAND_ITEMS = []; // [{ command, description, params }]
+let COMMAND_ITEMS = []; 
 
 function splitCSVLine(line) {
   const out = [];
@@ -203,9 +163,6 @@ const COMMANDS_CSV_PATH = path.join(__dirname, 'commands.csv');
 loadCommandsCSV(COMMANDS_CSV_PATH);
 console.log(`[init] Loaded ${VALID_COMMANDS.size} commands from ${COMMANDS_CSV_PATH}`);
 
-// -------------------------------
-// TCP helpers
-// -------------------------------
 function ensureDisconnected() {
   if (tcpClient) {
     try { tcpClient.removeAllListeners('data'); } catch (_) {}
@@ -214,7 +171,7 @@ function ensureDisconnected() {
   tcpClient = null;
   connectedServer = null;
   resetRecv();
-  // Perf/robust: clear pending confirm timers and reject all awaiters to avoid leaks
+
   try {
     for (const [, t] of PENDING) { try { clearTimeout(t); } catch (_) {} }
     PENDING.clear();
@@ -246,13 +203,13 @@ function connectToServer(target) {
     socket.setTimeout(10000);
 
     socket.once('connect', () => {
-      socket.setNoDelay(true); // lower latency on small writes
+      socket.setNoDelay(true); 
       tcpClient = socket;
       connectedServer = target;
       resetRecv();
       socket.on('data', appendRecv);
 		try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
-		// Optional: retry handshake once after a short delay if configured
+
 		try {
 		  if (HANDSHAKE_RETRY_MS > 0) setTimeout(() => {
 			try { if (tcpClient === socket && typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
@@ -283,7 +240,6 @@ function sendToTCP(data) {
   });
 }
 
-// Log API commands before sending
 /**
  * Log an API command and send it with the configured line ending.
  * @param {string} cmd Command without trailing newline
@@ -296,11 +252,11 @@ function sendCmdLogged(cmd) {
 
 function tailFile(filePath, maxLines) {
   const n = Math.max(1, Number(maxLines) || 1);
-  // Prefer in-memory ring buffer for speed
+
   if (Array.isArray(LOG_RING) && LOG_RING.length) {
     return LOG_RING.slice(-n);
   }
-  // Fallback: read file (legacy)
+
   if (!fs.existsSync(filePath)) return [];
   try {
     const text = fs.readFileSync(filePath, 'utf8');
@@ -333,10 +289,7 @@ async function waitQuiet(startLen, quietMs, maxMs) {
   });
 }
 
-// -------------------------------
-// Priority queue for on-wire sends + global min gap
-// -------------------------------
-let __queue = []; // items: { fn, priority, resolve, reject, label, enqueuedAt }
+let __queue = []; 
 let __pumping = false;
 let __lastSendAt = 0;
 
@@ -351,7 +304,7 @@ let __lastSendAt = 0;
 function runQueued(taskFn, { priority = 0, label = '' } = {}) {
   return new Promise((resolve, reject) => {
     const item = { fn: taskFn, priority, resolve, reject, label, enqueuedAt: Date.now() };
-    // stable priority insert (higher priority first)
+
     const idx = __queue.findIndex(x => (x.priority || 0) < priority);
     if (idx === -1) __queue.push(item); else __queue.splice(idx, 0, item);
     pumpQueue();
@@ -380,19 +333,14 @@ async function pumpQueue(){
   }
 }
 
-// -------------------------------
-// VGS cache + in-flight coalescing
-// -------------------------------
-const VGS_CACHE = new Map(); // key -> { ts, value, raw, bytes }
-const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
+const VGS_CACHE = new Map(); 
+const VGS_INFLIGHT = new Map(); 
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
-// Awaiters: allow parallel VGS requests without holding the queue
-// Per-key awaiters (coalesced VGS polls resolve here)
 const AWAITERS = new Map();
-// FIFO key order used to map bare 0/1 replies when controller omits address
+
 const VGS_WAIT_ORDER = [];
-// Safety bound to avoid memory growth during controller hiccups
+
 const AWAITERS_MAX_PER_KEY = Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200);
 /**
  * Register an awaiter for a `VGS# m s b` reply and enforce a timeout.
@@ -422,9 +370,6 @@ function awaitVGS(m, s, b, timeoutMs) {
   });
 }
 
-// Helper: register awaiter and send on-wire *inside* the queue,
-// so the timeout starts just before the write; the queue is released
-// immediately after the write (reply resolves later via AWAITERS).
 /**
  * Queue a `VGS#` send and attach an awaiter so the reply can resolve asynchronously
  * (the queue is released immediately after the write).
@@ -450,7 +395,7 @@ function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
           try { const idx = VGS_WAIT_ORDER.indexOf(key); if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1); } catch (_) {}
           reject(err);
         });
-        return; // release queue now; await reply outside
+        return; 
       } catch (e) {
         reject(e);
       }
@@ -458,33 +403,27 @@ function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
   });
 }
 
-// -------------------------------
-// NEW: Homebridge-driven whitelist + VOS push ingest
-// -------------------------------
 let HB_CONFIG_PATH = null;
 let WHITELIST = new Set();
 let WHITELIST_MTIME = null;
 
-const STATE = new Map();        // key "m/s/b" -> { value, ts }
-const PENDING = new Map();      // key -> timeoutId
-const DEBOUNCE_MS = 250;        // debounce SW bursts per device
+const STATE = new Map();        
+const PENDING = new Map();      
+const DEBOUNCE_MS = 250;        
 let INCOMING_TEXT_BUF = '';
 
 function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
 
-
 function detectHBConfigPath() {
-  // 1) Env override
+
   const fromEnv = process.env.HB_CONFIG_PATH;
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
 
-  // 2) config.js override (optional)
   const fromCfg = (config.HB_CONFIG_PATH && fs.existsSync(config.HB_CONFIG_PATH))
     ? config.HB_CONFIG_PATH
     : null;
   if (fromCfg) return fromCfg;
 
-  // 3) Sane defaults (no usernames)
   const home = os.homedir && os.homedir();
   const candidates = [
     ...(Array.isArray(config.HB_CONFIG_CANDIDATES) ? config.HB_CONFIG_CANDIDATES : []),
@@ -497,8 +436,6 @@ function detectHBConfigPath() {
   }
   return null;
 }
-
-
 
 function parseTripletFromUrl(u) {
   try {
@@ -565,13 +502,10 @@ function loadWhitelistFromHomebridgeSync() {
 }
 
 function isWhitelisted(m, s, b) {
-  // Configurable empty-whitelist policy:
-  //  - HB_WHITELIST_STRICT = true  -> deny-all when empty (safe default)
-  //  - HB_WHITELIST_STRICT = false -> allow-all when empty
+
   if (WHITELIST.size === 0) return HB_WHITELIST_STRICT ? false : true;
   return WHITELIST.has(keyOf(m, s, b));
 }
-
 
 function setState(m, s, b, value) {
   const k = keyOf(m, s, b);
@@ -580,7 +514,7 @@ function setState(m, s, b, value) {
   if (!prev || prev.value !== value) {
     STATE.set(k, { value, ts: now });
     logLine(`PUSH state ${k} = ${value}`);
-    // Optionally mirror to VGS cache too for richer /status JSON path
+
     const keyV = vgsKey(m, s, b);
     VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1 });
     if (PUSH_DEBUG) logLine(`PUSH cache updated ${m}/${s}/${b} -> ${value}`);
@@ -596,21 +530,21 @@ function setState(m, s, b, value) {
  */
 function processIncomingText(chunkUtf8) {
   INCOMING_TEXT_BUF += chunkUtf8;
-  // split on CR or LF boundaries
+
   let idx;
   while ((idx = INCOMING_TEXT_BUF.search(/[\r\n]/)) >= 0) {
-    // consume through the first newline char, also drop a following \n if this was \r\n
+
     let line = INCOMING_TEXT_BUF.slice(0, idx);
     let rest = INCOMING_TEXT_BUF.slice(idx + 1);
     if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     INCOMING_TEXT_BUF = rest;
-    if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
+    if (line.length) { processIncomingLineForSW(line); c(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
   }
-  // If no newline present, keep accumulating.
+
 }
 
 function processIncomingLineForSW(rawLine) {
-  // Matches multiple tokens on one line: "SW m s b v"
+
   const re = /(?:^|\s)SW\s+(\d+)\s+(\d+)\s+(\d+)\s+([01])\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
@@ -620,13 +554,13 @@ function processIncomingLineForSW(rawLine) {
 }
 
 function processIncomingLineForVGS(rawLine) {
-  // Resolve awaiters on lines like: "VGS m s b v"
+
   const re = /(?:^|\s)VGS\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     const key = vgsKey(M, S, B);
-    VGS_CACHE.set(key, { ts: Date.now(), value: !!V, raw: String(V), bytes: String(rawLine).length });
+	VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length });
     const list = AWAITERS.get(key);
     if (list && list.length) {
       AWAITERS.delete(key);
@@ -654,14 +588,14 @@ function processIncomingLineForBare01(rawLine) {
 }
 
 function processIncomingLineForRGS(rawLine) {
-  // Resolve awaiters on lines like: "RGS m s b v" (detailed read reply)
+
   const re = /(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     const key = vgsKey(M, S, B);
 	VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length });
-    // Resolve any awaiters for this key
+
     const list = AWAITERS.get(key);
     if (list && list.length) {
       AWAITERS.delete(key);
@@ -669,7 +603,7 @@ function processIncomingLineForRGS(rawLine) {
         try { clearTimeout(entry.timeout); entry.resolve(rawLine); } catch (_) {}
       }
     }
-    // Remove from FIFO fallback queue if present
+
     if (typeof VGS_WAIT_ORDER !== 'undefined') {
       const idx = VGS_WAIT_ORDER.indexOf(key);
       if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
@@ -677,16 +611,15 @@ function processIncomingLineForRGS(rawLine) {
   }
 }
 
-// Parse helpers for detailed replies (use RegExp constructors to avoid canvas regex literal issues)
 function parseRgsLine(text) {
-  // Matches: RGS# m s b v  (or RGS m s b v)
+
   const re = new RegExp('(?:^|\\s)RGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
 }
 
 function parseVgsLine(text) {
-  // Matches: VGS# m s b v  (or VGS m s b v)
+
   const re = new RegExp('(?:^|\\s)VGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
@@ -701,12 +634,11 @@ function parseStateFromAny(text) {
   return null;
 }
 
-
 function onSWEvent({ m, s, b, v }) {
   if (PUSH_DEBUG) logLine(`PUSH heard SW ${m}/${s}/${b} -> ${v}`);
-  if (!isWhitelisted(m, s, b)) return; // ignore devices not exposed to HB
+  if (!isWhitelisted(m, s, b)) return; 
   const k = keyOf(m, s, b);
-  // Debounce confirm (release confirms quicker)
+
   const existing = PENDING.get(k);
   if (existing) clearTimeout(existing);
   const delay = (v === 0) ? 60 : DEBOUNCE_MS;
@@ -740,8 +672,6 @@ async function confirmOneVGS(m, s, b) {
   return mBare ? Number(mBare[1]) : 0;
 }
 
-
-// Helper: consistent formatting for /status/vgs responses
 /**
  * Send a response in one of the supported formats for `/status/vgs`.
  * @param {import('express').Response} res
@@ -760,27 +690,20 @@ function sendFormatted(res, format, value, raw) {
     }
     return res.status(200).json({ ok: true, value, raw });
   } catch (_) {
-    // Fallback safety for any unexpected formatter error
+
     return res.status(200).type('text/plain').send(value ? 'true' : 'false');
   }
 }
 
-// -------------------------------
-// API
-// -------------------------------
-
-// Servers list
 app.get('/servers', (_req, res) => {
   const list = Array.isArray(config.servers) ? config.servers.map((s, i) => ({ index: i, name: s.name || `Server ${i}` , host: s.host, port: s.port })) : [];
   res.json({ servers: list });
 });
 
-// Status of connection
 app.get('/status', (_req, res) => {
   res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
 });
 
-// Connect
 app.post('/connect', async (req, res) => {
   try {
     const { serverIndex } = req.body || {};
@@ -798,7 +721,6 @@ app.post('/connect', async (req, res) => {
   }
 });
 
-// Disconnect
 app.post('/disconnect', (_req, res) => {
   if (!tcpClient) return res.json({ message: 'Already disconnected.' });
   const target = connectedServer;
@@ -807,7 +729,6 @@ app.post('/disconnect', (_req, res) => {
   res.json({ message: 'Disconnected.' });
 });
 
-// Send (supports waitMs and quietMs)
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
@@ -821,13 +742,13 @@ app.post('/send', async (req, res) => {
     let payload = null;
     if (typeof command === 'string' && command.trim()) {
       const cmd = command.trim();
-      // Soft validation: accept base token with params and trailing modifiers
+
       const base = cmd.replace(/[\r\n]+/g, '').replace(/[$#]+$/g, '').split(/\s+/)[0];
       if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd) && !VALID_COMMANDS.has(base)) {
         return res.status(400).json({ message: 'Invalid command.' });
       }
       payload = cmd + NL;
-      logLine(`CMD -> ${cmd}`); // UI/clients via /send
+      logLine(`CMD -> ${cmd}`); 
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
       payload = data;
       logLine(`DATA -> ${String(data).slice(0, 200)}${String(data).length > 200 ? '…' : ''}`);
@@ -835,8 +756,7 @@ app.post('/send', async (req, res) => {
       return res.status(400).json({ message: 'No command or data provided.' });
     }
 
-    // Run send + wait INSIDE the queue so nothing else interleaves
-    const uiPriority = 5; // higher than status polls (0), lower than control bursts (10)
+    const uiPriority = 5; 
     const buf = await runQueued(async () => {
       const startLen = RECV_BUFFER.length;
       if (typeof command === 'string' && command.trim()) {
@@ -867,9 +787,6 @@ app.post('/send', async (req, res) => {
   }
 });
 
-// Convenience: VSW test route
-//   GET /test/vsw?m=2&s=20&b=7&state=1&waitMs=800
-//   POST /test/vsw { m,s,b,state,waitMs }
 app.get('/test/vsw', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
@@ -887,7 +804,7 @@ app.get('/test/vsw', async (req, res) => {
       await sendCmdLogged(cmd);
       if (waitMs > 0) { await sleep(waitMs); return RECV_BUFFER.slice(startLen); }
       return Buffer.alloc(0);
-    }, { priority: 10, label: cmd }); // priority: controls > polls
+    }, { priority: 10, label: cmd }); 
 
     const response = (waitMs > 0) ? { bytes: buf.length, text: buf.toString('utf8') } : null;
     return res.json({ ok:true, sent: cmd, response });
@@ -925,12 +842,6 @@ app.post('/test/vsw', async (req, res) => {
   }
 });
 
-// Status: VGS (switch only)
-//   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&cacheMs=750&jitterMs=300][&format=raw|bool]
-//   - Sends "VGS# m s b" and returns state (parses RGS#/VGS# replies; falls back to bare 0/1)
-//   - format=raw  -> text/plain "0" or "1" (empty if none)
-//   - format=bool -> text/plain "true" or "false" (empty if none)
-//   - default JSON -> { ok, sent, state, raw, bytes, cached? }
 app.get('/status/vgs', async (req, res) => {
   try {
     if (!tcpClient) { logHttp(req, 'VGS poll while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
@@ -953,7 +864,6 @@ app.get('/status/vgs', async (req, res) => {
     const now = Date.now();
     const fmt = String(req.query.format || '').toLowerCase();
 
-    // FAST PATH: serve from push STATE if fresh (PUSH_FRESH_MS)
     const kState = keyOf(m, s, b);
     const st = STATE.get(kState);
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
@@ -961,21 +871,18 @@ app.get('/status/vgs', async (req, res) => {
 	return sendFormatted(res, fmt, value, String(value));
     }
 
-    // Serve fresh VGS cache immediately
     const cached = VGS_CACHE.get(key);
     if (cached && (now - cached.ts) < cacheMs) {
       const value = cached.value;
  	  return sendFormatted(res, fmt, cached.value, cached.raw);
+ 	  }
     }
 
-    // Coalesce concurrent identical VGS polls
     if (VGS_INFLIGHT.has(key)) {
       const infl = await VGS_INFLIGHT.get(key);
       const value = infl.value;
 	  return sendFormatted(res, fmt, infl.value, infl.raw);
 
-
-    // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
       if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
 	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
@@ -995,7 +902,7 @@ app.get('/status/vgs', async (req, res) => {
 
   } catch (err) {
     logLine(`VGS status error: ${err && err.message ? err.message : String(err)}`);
-    // Try stale cache first, based on m/s/b from the query
+
     const format = String((req.query && req.query.format) || '').toLowerCase();
     let key = null;
     try {
@@ -1015,23 +922,20 @@ app.get('/status/vgs', async (req, res) => {
       }
     }
 
-    // Last resort: keep Homebridge happy for format=bool
     res.setHeader('X-Status-Error', err && err.message ? err.message : 'error');
     if (format === 'bool') {
-      return sendFormatted(res, 'bool', 0, null); // 200 'false'
+      return sendFormatted(res, 'bool', 0, null); 
     }
 
     return res.status(500).json({ ok:false, message: 'VGS status failed.' });
   }
 });
 
-// Commands (rich + legacy)
 app.get('/commands', (_req, res) => {
   const cmds = Array.from(VALID_COMMANDS.values()).sort();
   res.json({ commands: cmds, count: cmds.length, items: COMMAND_ITEMS });
 });
 
-// Admin: reload commands.csv on demand
 app.post('/admin/reload-commands', (_req, res) => {
   loadCommandsCSV(COMMANDS_CSV_PATH);
   const count = VALID_COMMANDS.size;
@@ -1040,7 +944,6 @@ app.post('/admin/reload-commands', (_req, res) => {
   res.json({ message: 'Commands reloaded', count });
 });
 
-// Whitelist visibility + reload (Homebridge-driven)
 app.get('/whitelist', (_req, res) => {
   res.json({
     source: 'homebridge',
@@ -1055,7 +958,6 @@ app.post('/whitelist/reload', (_req, res) => {
   res.json({ message: 'reloaded', count: WHITELIST.size, mtime: WHITELIST_MTIME });
 });
 
-// Logs tail
 app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
@@ -1067,8 +969,6 @@ app.get('/logs', (req, res) => {
   return res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
 
-
-// Recent TCP recv
 app.get('/recv', (req, res) => {
   try {
     const fmtRaw = (req.query && req.query.format) ? String(req.query.format) : 'utf8';
@@ -1093,13 +993,9 @@ app.post('/recv/reset', (_req, res) => {
   res.json({ message: 'recv reset' });
 });
 
-// -------------------------------
-// Startup
-// -------------------------------
 const PORT = Number(process.env.PORT || config.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Preload whitelist on boot (best-effort)
 try { loadWhitelistFromHomebridgeSync(); } catch (_) {}
 
 const httpServer = app.listen(PORT, HOST, () => {
