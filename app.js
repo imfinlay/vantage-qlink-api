@@ -466,7 +466,6 @@ let INCOMING_TEXT_BUF = '';
 
 function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
 
-const path = require('path');
 const os = require('os');
 
 function detectHBConfigPath() {
