@@ -445,21 +445,40 @@ function toggleTail(){
     tb.innerHTML = '';
 
     items.forEach(it => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="monospace" data-command="${it.command}">${it.command}</td>
-        <td>${it.description}</td>
-        <td class=\"monospace\">${it.params || ''}</td>`;
-      tr.dataset.params = it.params || '';
-      tr.addEventListener('click', () => {
-        const mod = getSelectedModifier();
-        const withMod = buildCommandWithModifier(it.command, mod);
-        const full = it.params ? `${withMod} ${it.params}` : withMod;
-        const input = document.getElementById('command-input');
-        input.value = full;
-        input.focus();
-      });
-      tb.appendChild(tr);
+		const tr = document.createElement('tr');
+		
+		// command
+		const tdCmd = document.createElement('td');
+		tdCmd.className = 'monospace';
+		tdCmd.dataset.command = it.command || '';
+		tdCmd.textContent = it.command || '';
+		
+		// description
+		const tdDesc = document.createElement('td');
+		tdDesc.textContent = it.description || '';
+		
+		// params (show <placeholders> literally)
+		const tdParams = document.createElement('td');
+		tdParams.className = 'monospace';
+		tdParams.textContent = it.params || '';
+		
+		tr.appendChild(tdCmd);
+		tr.appendChild(tdDesc);
+		tr.appendChild(tdParams);
+		
+		// keep existing click behavior
+		tr.dataset.params = it.params || '';
+		tr.addEventListener('click', () => {
+		  const mod = getSelectedModifier();
+		  const withMod = buildCommandWithModifier(it.command, mod);
+		  const full = it.params ? `${withMod} ${it.params}` : withMod;
+		  const input = document.getElementById('command-input');
+		  input.value = full;
+		  input.focus();
+		});
+		
+		tb.appendChild(tr);
+
     });
   }
 
