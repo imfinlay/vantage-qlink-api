@@ -861,7 +861,11 @@ app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
   const lines = tailFile(LOG_FILE_PATH, limit);
-  res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
+  const fmt = String(req.query.format || '').toLowerCase();
+  if (fmt === 'txt') {
+    return res.type('text/plain').send(lines.join('\n'));
+  }
+  return res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
 
 // Recent TCP receive buffer
