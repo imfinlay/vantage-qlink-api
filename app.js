@@ -570,8 +570,9 @@ function onSWEvent({ m, s, b, v }) {
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
   const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
-  const m01 = String(raw).match(/\b([01])\b/);
-  return m01 ? Number(m01[1]) : 0;
+  // Parse the 4th numeric token (v) from: "RGS# m s b v"
+  const mRgs = String(raw).match(/(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/);
+  return mRgs ? (Number(mRgs[4]) ? 1 : 0) : 0;
 }
 
 // -------------------------------
@@ -793,9 +794,10 @@ app.get('/status/vgs', async (req, res) => {
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
   if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-  const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
-  const m01 = String(raw).match(/\b([01])\b/);
-  const value = m01 ? Number(m01[1]) : null;
+	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+	// Parse detailed reply: "RGS# m s b v" → use the 4th numeric token as state
+	const mRgs = String(raw).match(/(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/);
+	const value = mRgs ? (Number(mRgs[4]) ? 1 : 0) : null;
   const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
   VGS_CACHE.set(key, rec);
   return { value, raw: String(raw), bytes: String(raw).length };
@@ -870,11 +872,13 @@ app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
   const lines = tailFile(LOG_FILE_PATH, limit);
-  if (String(req.query.format || '').toLowerCase() === 'txt') {
+  const fmt = String(req.query.format || '').toLowerCase();
+  if (fmt === 'txt') {
     return res.type('text/plain').send(lines.join('\n'));
   }
-  res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
+  return res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
+
 
 
 // Recent TCP receive buffer
