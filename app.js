@@ -26,6 +26,7 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const express = require('express');
+const os = require('os');
 
 // -------------------------------
 // Configuration
@@ -466,20 +467,19 @@ let INCOMING_TEXT_BUF = '';
 
 function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
 
-const os = require('os');
 
 function detectHBConfigPath() {
-  // 1) Environment variable
+  // 1) Env override
   const fromEnv = process.env.HB_CONFIG_PATH;
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
 
-  // 2) Config.js override
+  // 2) config.js override (optional)
   const fromCfg = (config.HB_CONFIG_PATH && fs.existsSync(config.HB_CONFIG_PATH))
     ? config.HB_CONFIG_PATH
     : null;
   if (fromCfg) return fromCfg;
 
-  // 3) Candidate list (config.js + sane defaults)
+  // 3) Sane defaults (no usernames)
   const home = os.homedir && os.homedir();
   const candidates = [
     ...(Array.isArray(config.HB_CONFIG_CANDIDATES) ? config.HB_CONFIG_CANDIDATES : []),
@@ -492,6 +492,7 @@ function detectHBConfigPath() {
   }
   return null;
 }
+
 
 
 function parseTripletFromUrl(u) {
