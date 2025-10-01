@@ -63,8 +63,7 @@ function appendRecv(buf) {
     RECV_BUFFER = Buffer.concat([RECV_BUFFER, buf]);
     // One decode for both preview and parser
     const text = buf.toString('utf8');
-    const preview = text.replace(/?
-/g, ' ').slice(0, 200);
+    const preview = text.replace(/\r?\n/g, ' ').slice(0, 200);
     if (preview) logLine(`RX <- ${preview}`);
     // Feed event line parser
     processIncomingText(text);
@@ -109,12 +108,10 @@ function _openLogStream() {
 }
 _openLogStream();
 function logLine(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}
-`;
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
   // In-memory ring for fast /logs
   try {
-    LOG_RING.push(line.endsWith('
-') ? line.slice(0, -1) : line);
+    LOG_RING.push(line.endsWith('\n') ? line.slice(0, -1) : line);
     if (LOG_RING.length > LOG_RING_MAX) LOG_RING.splice(0, LOG_RING.length - LOG_RING_MAX);
   } catch (_) {}
   // Stream to disk without blocking the event loop
@@ -271,8 +268,7 @@ function tailFile(filePath, maxLines) {
   if (!fs.existsSync(filePath)) return [];
   try {
     const text = fs.readFileSync(filePath, 'utf8');
-    const lines = text.split(/?
-/);
+    const lines = text.split(/\r?\n/);
     if (lines.length && lines[lines.length - 1] === '') lines.pop();
     return lines.slice(-n);
   } catch (_) { return []; }
