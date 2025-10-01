@@ -467,13 +467,31 @@ let INCOMING_TEXT_BUF = '';
 function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
 
 function detectHBConfigPath() {
-  if (process.env.HB_CONFIG_PATH && fs.existsSync(process.env.HB_CONFIG_PATH)) return process.env.HB_CONFIG_PATH;
+const path = require('path');
+const os = require('os');
+
+function detectHBConfigPath() {
+  // 1) Environment variable
+  const fromEnv = process.env.HB_CONFIG_PATH;
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+
+  // 2) Config.js override
+  const fromCfg = (config.HB_CONFIG_PATH && fs.existsSync(config.HB_CONFIG_PATH))
+    ? config.HB_CONFIG_PATH
+    : null;
+  if (fromCfg) return fromCfg;
+
+  // 3) Candidate list (config.js + sane defaults)
+  const home = os.homedir && os.homedir();
   const candidates = [
+    ...(Array.isArray(config.HB_CONFIG_CANDIDATES) ? config.HB_CONFIG_CANDIDATES : []),
     '/var/lib/homebridge/config.json',
-    '/home/homeauto/.homebridge/config.json',
-    '/home/imfinlay/.homebridge/config.json'
-  ];
-  for (const p of candidates) { try { if (fs.existsSync(p)) return p; } catch (_) {} }
+    home ? path.join(home, '.homebridge', 'config.json') : null
+  ].filter(Boolean);
+
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch (_) {}
+  }
   return null;
 }
 
