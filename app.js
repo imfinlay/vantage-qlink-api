@@ -1056,4 +1056,60 @@ app.get('/logs', (req, res) => {
 });
 
 
-// Recent TCP rec
+// Recent TCP recv
+app.get('/recv', (req, res) => {
+  try {
+    const fmtRaw = (req.query && req.query.format) ? String(req.query.format) : 'utf8';
+    const fmt = fmtRaw.toLowerCase();
+    const startRaw = parseInt(req.query && req.query.start, 10);
+    const endRaw = parseInt(req.query && req.query.end, 10);
+    const start = Number.isFinite(startRaw) ? Math.max(0, startRaw) : 0;
+    const end = Number.isFinite(endRaw) ? Math.max(0, Math.min(endRaw, RECV_BUFFER.length)) : RECV_BUFFER.length;
+    let buf = RECV_BUFFER;
+    if (start > 0 || end < RECV_BUFFER.length) buf = RECV_BUFFER.slice(start, end);
+
+    if (fmt === 'hex') return res.type('text/plain').send(buf.toString('hex'));
+    if (fmt === 'base64') return res.type('text/plain').send(buf.toString('base64'));
+    return res.type('text/plain').send(buf.toString('utf8'));
+  } catch (e) {
+    return res.status(500).json({ message: 'recv error' });
+  }
+});
+
+app.post('/recv/reset', (_req, res) => {
+  resetRecv();
+  res.json({ message: 'recv reset' });
+});
+
+// -------------------------------
+// Startup
+// -------------------------------
+const PORT = Number(process.env.PORT || config.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
+
+// Preload whitelist on boot (best‑effort)
+try { loadWhitelistFromHomebridgeSync(); } catch (_) {}
+
+const httpServer = app.listen(PORT, HOST, () => {
+  console.log(`[init] HTTP listening on ${HOST}:${PORT}`);
+  try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
+});
+
+httpServer.on('error', (err) => {
+  const msg = err && err.message ? err.message : String(err);
+  console.error('[init] HTTP listen error:', msg);
+  try { logLine(`HTTP listen error: ${msg}`); } catch (_) {}
+});
+
+process.on('SIGINT', () => {
+  try { logLine('SIGINT received, shutting down'); } catch (_) {}
+  try { if (_logStream) _logStream.end(); } catch (_) {}
+  try { ensureDisconnected(); } catch (_) {}
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  try { logLine('SIGTERM received, shutting down'); } catch (_) {}
+  try { if (_logStream) _logStream.end(); } catch (_) {}
+  try { ensureDisconnected(); } catch (_) {}
+  process.exit(0);
+});
