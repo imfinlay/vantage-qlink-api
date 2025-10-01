@@ -150,6 +150,11 @@ function logHttp(req, msg){
   try { logLine(`HTTP ${req.method} ${req.path} from ${clientIp(req)} -> ${msg}`); } catch (_) {}
 }
 
+function toOn(v) {
+  // Normalize mixed types to a boolean ON
+  return v === 1 || v === true || v === '1';
+}
+
 // -------------------------------
 // Commands.csv parsing & validation (rich)
 // -------------------------------
@@ -638,7 +643,7 @@ function processIncomingLineForBare01(rawLine) {
   const v = Number(m[1]);
   const key = VGS_WAIT_ORDER.shift();
   if (!key) return;
-  VGS_CACHE.set(key, { ts: Date.now(), value: !!v, raw: String(v), bytes: String(rawLine).length });
+  VGS_CACHE.set(key, { ts: Date.now(), value: (v ? 1 : 0), raw: String(v), bytes: String(rawLine).length });
   const list = AWAITERS.get(key);
   if (list && list.length) {
     AWAITERS.delete(key);
@@ -655,7 +660,7 @@ function processIncomingLineForRGS(rawLine) {
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     const key = vgsKey(M, S, B);
-    VGS_CACHE.set(key, { ts: Date.now(), value: !!V, raw: String(V), bytes: String(rawLine).length });
+	VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length });
     // Resolve any awaiters for this key
     const list = AWAITERS.get(key);
     if (list && list.length) {
@@ -957,7 +962,7 @@ app.get('/status/vgs', async (req, res) => {
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
       const value = st.value;
       if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
-      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
+	  if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (toOn(value) ? 'true' : 'false')); }
       return res.json({ ok:true, sent: `(push-cache) ${cmd}`, state: value, raw: String(value), bytes: 1, cached: true });
     }
 
@@ -966,7 +971,8 @@ app.get('/status/vgs', async (req, res) => {
     if (cached && (now - cached.ts) < cacheMs) {
       const value = cached.value;
       if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
-      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
+	  if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (toOn(value) ? 'true' : 'false')); }
+
       return res.json({ ok:true, sent: `(cached) ${cmd}`, state: value, raw: cached.raw, bytes: cached.bytes, cached: true });
     }
 
@@ -996,7 +1002,8 @@ app.get('/status/vgs', async (req, res) => {
     try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
 
     if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : String(out.value)); }
-    if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : (out.value ? 'true' : 'false')); }
+    if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : (toOn(out.value) ? 'true' : 'false')); }
+
 
     return res.json({ ok:true, sent: cmd, state: out.value, raw: out.raw, bytes: out.bytes });
   } catch (err) {
