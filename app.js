@@ -1068,7 +1068,7 @@ app.get('/recv', (req, res) => {
     let buf = RECV_BUFFER;
     if (start > 0 || end < RECV_BUFFER.length) buf = RECV_BUFFER.slice(start, end);
 
-    if (fmt === 'hex') return res.type('text/plain').send(buf.toString('hex'));
+    if (fmt === 'hex')    return res.type('text/plain').send(buf.toString('hex'));
     if (fmt === 'base64') return res.type('text/plain').send(buf.toString('base64'));
     return res.type('text/plain').send(buf.toString('utf8'));
   } catch (e) {
@@ -1087,7 +1087,7 @@ app.post('/recv/reset', (_req, res) => {
 const PORT = Number(process.env.PORT || config.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Preload whitelist on boot (best‑effort)
+// Preload whitelist on boot (best-effort)
 try { loadWhitelistFromHomebridgeSync(); } catch (_) {}
 
 const httpServer = app.listen(PORT, HOST, () => {
