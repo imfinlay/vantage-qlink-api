@@ -39,6 +39,8 @@
 * Parses **VOS push** lines like `SW m s b v`, does a one‑shot `VGS#` confirm, and updates a state cache that can short‑circuit polling for a short window.
 * Serves a **simple Web UI** for sending commands, viewing logs, and browsing available commands.
 
+* **VERY IMPORTANT!** The back-end app does NOT auto-connect to the Vantage Qlink IP thing. I left this in the web UI (i.e. you HAVE to manually connect) because the Qlink application which lets you program the system connects directly to the same IP/port, so I wanted to be able to disconnect and/or troubleshoot the Vantage system easily. Mine, every time there's a daylight savings time change, gets its timers messed up and I have to reload the programming. 
+
 ## Architecture
 
 ```
