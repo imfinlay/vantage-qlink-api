@@ -55,16 +55,19 @@ let RECV_BUFFER = Buffer.alloc(0);
 function appendRecv(buf) {
   try {
     if (!Buffer.isBuffer(buf)) buf = Buffer.from(String(buf));
-    RECV_BUFFER = Buffer.concat([RECV_BUFFER, buf]);
-    if (RECV_BUFFER.length > MAX_RECV_BYTES) {
-      RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - MAX_RECV_BYTES);
+    // Pre-trim to avoid oversized intermediate buffers on concat
+    if (RECV_BUFFER.length + buf.length > MAX_RECV_BYTES) {
+      const keep = Math.max(0, MAX_RECV_BYTES - buf.length);
+      if (keep < RECV_BUFFER.length) RECV_BUFFER = RECV_BUFFER.slice(RECV_BUFFER.length - keep);
     }
-    // Logging preview
-    const preview = buf.toString('utf8').replace(/\r?\n/g, ' ').slice(0, 200);
+    RECV_BUFFER = Buffer.concat([RECV_BUFFER, buf]);
+    // One decode for both preview and parser
+    const text = buf.toString('utf8');
+    const preview = text.replace(/?
+/g, ' ').slice(0, 200);
     if (preview) logLine(`RX <- ${preview}`);
-
     // Feed event line parser
-    processIncomingText(buf.toString('utf8'));
+    processIncomingText(text);
   } catch (_) {}
 }
 function resetRecv() { RECV_BUFFER = Buffer.alloc(0); INCOMING_TEXT_BUF = ''; }
@@ -79,9 +82,57 @@ app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }))
 // -------------------------------
 // Logging helpers
 // -------------------------------
+// Perf: switch to a non-blocking log stream + in-memory ring buffer for quick /logs tail
+const LOG_RING_MAX = Number(process.env.LOG_RING_MAX || (config && config.LOG_RING_MAX) || 2000);
+let LOG_RING = [];
+let _logStream = null;
+let _logBusy = false;
+let _logQueue = [];
+function _openLogStream() {
+  try {
+    _logStream = fs.createWriteStream(LOG_FILE_PATH, { flags: 'a' });
+    _logStream.on('drain', () => {
+      _logBusy = false;
+      try {
+        while (_logQueue.length && !_logBusy) {
+          const s = _logQueue.shift();
+          _logBusy = !_logStream.write(s);
+        }
+      } catch (_) {}
+    });
+    _logStream.on('error', (err) => {
+      try { console.error('[log] stream error:', err && err.message ? err.message : String(err)); } catch (_) {}
+      try { _logStream.destroy(); } catch (_) {}
+      _logStream = null;
+    });
+  } catch (_) { _logStream = null; }
+}
+_openLogStream();
 function logLine(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}\n`;
-  try { fs.appendFileSync(LOG_FILE_PATH, line); } catch (_) {}
+  const line = `[${new Date().toISOString()}] ${msg}
+`;
+  // In-memory ring for fast /logs
+  try {
+    LOG_RING.push(line.endsWith('
+') ? line.slice(0, -1) : line);
+    if (LOG_RING.length > LOG_RING_MAX) LOG_RING.splice(0, LOG_RING.length - LOG_RING_MAX);
+  } catch (_) {}
+  // Stream to disk without blocking the event loop
+  try {
+    if (!_logStream) _openLogStream();
+    if (_logStream) {
+      if (!_logBusy) {
+        _logBusy = !_logStream.write(line);
+      } else {
+        _logQueue.push(line);
+      }
+    } else {
+      // Fallback (non-throwing): async append
+      fs.appendFile(LOG_FILE_PATH, line, () => {});
+    }
+  } catch (_) {
+    try { fs.appendFile(LOG_FILE_PATH, line, () => {}); } catch (_) {}
+  }
 }
 function clientIp(req){
   try {
@@ -153,6 +204,20 @@ function ensureDisconnected() {
   tcpClient = null;
   connectedServer = null;
   resetRecv();
+  // Perf/robust: clear pending confirm timers and reject all awaiters to avoid leaks
+  try {
+    for (const [, t] of PENDING) { try { clearTimeout(t); } catch (_) {} }
+    PENDING.clear();
+  } catch (_) {}
+  try {
+    for (const [k, list] of AWAITERS) {
+      AWAITERS.delete(k);
+      for (const entry of list) {
+        try { clearTimeout(entry.timeout); entry.reject(new Error('disconnected')); } catch (_) {}
+      }
+    }
+    VGS_WAIT_ORDER.length = 0;
+  } catch (_) {}
 }
 
 function connectToServer(target) {
@@ -164,6 +229,7 @@ function connectToServer(target) {
     socket.setTimeout(10000);
 
     socket.once('connect', () => {
+      socket.setNoDelay(true); // lower latency on small writes
       tcpClient = socket;
       connectedServer = target;
       resetRecv();
@@ -196,12 +262,19 @@ function sendCmdLogged(cmd) {
 }
 
 function tailFile(filePath, maxLines) {
+  const n = Math.max(1, Number(maxLines) || 1);
+  // Prefer in-memory ring buffer for speed
+  if (Array.isArray(LOG_RING) && LOG_RING.length) {
+    return LOG_RING.slice(-n);
+  }
+  // Fallback: read file (legacy)
   if (!fs.existsSync(filePath)) return [];
   try {
     const text = fs.readFileSync(filePath, 'utf8');
-    const lines = text.split(/\r?\n/);
+    const lines = text.split(/?
+/);
     if (lines.length && lines[lines.length - 1] === '') lines.pop();
-    return lines.slice(-maxLines);
+    return lines.slice(-n);
   } catch (_) { return []; }
 }
 
@@ -276,11 +349,15 @@ const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
 // Awaiters: allow parallel VGS requests without holding the queue
 const AWAITERS = new Map();
-const VGS_WAIT_ORDER = []; // FIFO of keys awaiting a reply (for bare 0/1 fallbacks) // key -> [{resolve,reject,timeout}]
+const VGS_WAIT_ORDER = [];
+const AWAITERS_MAX_PER_KEY = Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200); // FIFO of keys awaiting a reply (for bare 0/1 fallbacks) // key -> [{resolve,reject,timeout}]
 function awaitVGS(m, s, b, timeoutMs) {
   const key = vgsKey(m, s, b);
   return new Promise((resolve, reject) => {
     const list = AWAITERS.get(key) || [];
+    if (list.length >= AWAITERS_MAX_PER_KEY) {
+      return reject(new Error('awaiters limit reached'));
+    }
     const to = setTimeout(() => {
       try {
         const arr = AWAITERS.get(key) || [];
@@ -867,6 +944,7 @@ app.get('/logs', (req, res) => {
   }
   return res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
+
 
 // Recent TCP receive buffer
 app.get('/recv', (req, res) => {
