@@ -179,17 +179,6 @@ function connectToServer(target) {
   });
 }
 
-function sendFormatted(res, format, value, raw) {
-  if (format === 'bool') {
-    const out = value ? 'true' : 'false';
-    return res.status(200).type('text/plain').send(out);
-  }
-  if (format === 'raw') {
-    return res.status(200).type('text/plain').send(raw != null ? String(raw) : '');
-  }
-  return res.status(200).json({ ok: true, value, raw });
-}
-
 function sendToTCP(data) {
   return new Promise((resolve, reject) => {
     if (!tcpClient) return reject(new Error('Not connected'));
@@ -278,18 +267,6 @@ async function pumpQueue(){
   }
 }
 
-// Back-compat wrapper
-function runInTcpQueue(task) { return runQueued(task, { priority: 0 }); }
-
-// Helper: send + collect using quietMs/maxMs inside the queue
-function sendAndCollect(cmd, { quietMs = 200, maxMs = 1200, priority = 0 } = {}) {
-  return runQueued(async () => {
-    const startLen = RECV_BUFFER.length;
-    await sendCmdLogged(cmd);
-    return await waitQuiet(startLen, quietMs, maxMs);
-  }, { priority, label: cmd });
-}
-
 // -------------------------------
 // VGS cache + in-flight coalescing
 // -------------------------------
@@ -316,40 +293,31 @@ function awaitVGS(m, s, b, timeoutMs) {
   });
 }
 
+// Helper: register awaiter and send on-wire *inside* the queue,
+// so the timeout starts just before the write; the queue is released
+// immediately after the write (reply resolves later via AWAITERS).
 function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
   return new Promise((resolve, reject) => {
     runQueued(async () => {
       try {
         const key = vgsKey(m, s, b);
-        const p = awaitVGS(m, s, b, maxMs);       // timer starts just before the write
-        if (typeof VGS_WAIT_ORDER !== 'undefined') VGS_WAIT_ORDER.push(key);
-        await sendCmdLogged(cmd);                  // do the on-wire write (respects MIN_GAP_MS)
-        // release queue now; resolve later when reply arrives
-        p.then(raw => {
-          try {
-            if (typeof VGS_WAIT_ORDER !== 'undefined') {
-              const idx = VGS_WAIT_ORDER.indexOf(key);
-              if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
-            }
-          } catch (_) {}
+        const p = awaitVGS(m, s, b, maxMs);
+        VGS_WAIT_ORDER.push(key);
+        await sendCmdLogged(cmd);
+        p.then((raw) => {
+          try { const idx = VGS_WAIT_ORDER.indexOf(key); if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1); } catch (_) {}
           resolve(raw);
-        }).catch(err => {
-          try {
-            if (typeof VGS_WAIT_ORDER !== 'undefined') {
-              const idx = VGS_WAIT_ORDER.indexOf(key);
-              if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1);
-            }
-          } catch (_) {}
+        }).catch((err) => {
+          try { const idx = VGS_WAIT_ORDER.indexOf(key); if (idx !== -1) VGS_WAIT_ORDER.splice(idx, 1); } catch (_) {}
           reject(err);
         });
-        return; // important: return without awaiting p, so the queue moves on
+        return; // release queue now; await reply outside
       } catch (e) {
         reject(e);
       }
     }, { priority: 0, label: cmd });
   });
 }
-
 
 // -------------------------------
 // NEW: Homebridge-driven whitelist + VOS push ingest
@@ -523,7 +491,7 @@ function processIncomingLineForBare01(rawLine) {
 
 function processIncomingLineForRGS(rawLine) {
   // Resolve awaiters on lines like: "RGS m s b v" (detailed read reply)
-	const re = /(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
+  const re = /(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
@@ -570,9 +538,25 @@ function onSWEvent({ m, s, b, v }) {
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
   const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
-  // Parse the 4th numeric token (v) from: "RGS# m s b v"
-  const mRgs = String(raw).match(/(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/);
-  return mRgs ? (Number(mRgs[4]) ? 1 : 0) : 0;
+  const m01 = String(raw).match(/\u0008([01])\u0008/); // NOTE: parser fixed in later phases
+  return m01 ? Number(m01[1]) : 0;
+}
+
+// Helper: consistent formatting for /status/vgs responses
+function sendFormatted(res, format, value, raw) {
+  try {
+    if (format === 'bool') {
+      const out = value ? 'true' : 'false';
+      return res.status(200).type('text/plain').send(out);
+    }
+    if (format === 'raw') {
+      return res.status(200).type('text/plain').send(raw != null ? String(raw) : '');
+    }
+    return res.status(200).json({ ok: true, value, raw });
+  } catch (_) {
+    // Fallback safety for any unexpected formatter error
+    return res.status(200).type('text/plain').send(value ? 'true' : 'false');
+  }
 }
 
 // -------------------------------
@@ -793,15 +777,14 @@ app.get('/status/vgs', async (req, res) => {
 
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
-  if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
-	// Parse detailed reply: "RGS# m s b v" → use the 4th numeric token as state
-	const mRgs = String(raw).match(/(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/);
-	const value = mRgs ? (Number(mRgs[4]) ? 1 : 0) : null;
-  const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
-  VGS_CACHE.set(key, rec);
-  return { value, raw: String(raw), bytes: String(raw).length };
-})();
+      if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
+      const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+      const m01 = String(raw).match(/\u0008([01])\u0008/); // NOTE: parser fixed in later phases
+      const value = m01 ? Number(m01[1]) : null;
+      const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+      VGS_CACHE.set(key, rec);
+      return { value, raw: String(raw), bytes: String(raw).length };
+    })();
 
     VGS_INFLIGHT.set(key, p);
     let out;
@@ -812,29 +795,35 @@ app.get('/status/vgs', async (req, res) => {
 
     return res.json({ ok:true, sent: cmd, state: out.value, raw: out.raw, bytes: out.bytes });
   } catch (err) {
-	  logLine(`VGS status error: ${err && err.message ? err.message : String(err)}`);
-	  const format = String((req.query && req.query.format) || '').toLowerCase();
-	
-	  // Try stale cache
-	  const mm = parseInt(req.query.m, 10);
-	  const ss = parseInt(req.query.s, 10);
-	  const bb = parseInt(req.query.b, 10);
-	  if (Number.isFinite(mm) && Number.isFinite(ss) && Number.isFinite(bb)) {
-		const k = vgsKey(mm, ss, bb);
-		const stale = VGS_CACHE.get(k);
-		if (stale) {
-		  res.setHeader('X-Status-Fallback', 'stale-cache');
-		  return sendFormatted(res, format, stale.value, stale.raw);
-		}
-	  }
-	
-	  // Last resort: keep HB happy for format=bool
-	  res.setHeader('X-Status-Error', err && err.message ? err.message : 'error');
-	  if (format === 'bool') return sendFormatted(res, 'bool', 0, null);
-	
-	  return res.status(500).json({ ok:false, message: 'VGS status failed.' });
-	}
+    logLine(`VGS status error: ${err && err.message ? err.message : String(err)}`);
+    // Try stale cache first, based on m/s/b from the query
+    const format = String((req.query && req.query.format) || '').toLowerCase();
+    let key = null;
+    try {
+      const mm = parseInt(req.query.m, 10);
+      const ss = parseInt(req.query.s, 10);
+      const bb = parseInt(req.query.b, 10);
+      if (Number.isFinite(mm) && Number.isFinite(ss) && Number.isFinite(bb)) {
+        key = vgsKey(mm, ss, bb);
+      }
+    } catch (_) {}
 
+    if (key) {
+      const stale = VGS_CACHE.get(key);
+      if (stale) {
+        res.setHeader('X-Status-Fallback', 'stale-cache');
+        return sendFormatted(res, format, stale.value, stale.raw);
+      }
+    }
+
+    // Last resort: keep Homebridge happy for format=bool
+    res.setHeader('X-Status-Error', err && err.message ? err.message : 'error');
+    if (format === 'bool') {
+      return sendFormatted(res, 'bool', 0, null); // 200 'false'
+    }
+
+    return res.status(500).json({ ok:false, message: 'VGS status failed.' });
+  }
 });
 
 // Commands (rich + legacy)
@@ -872,14 +861,8 @@ app.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
   const lines = tailFile(LOG_FILE_PATH, limit);
-  const fmt = String(req.query.format || '').toLowerCase();
-  if (fmt === 'txt') {
-    return res.type('text/plain').send(lines.join('\n'));
-  }
-  return res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
+  res.json({ file: LOG_FILE_PATH, count: lines.length, lines });
 });
-
-
 
 // Recent TCP receive buffer
 app.get('/recv', (req, res) => {
