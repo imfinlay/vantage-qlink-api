@@ -37,6 +37,10 @@ const PUSH_DEBUG = !!(process.env.PUSH_DEBUG || (config && config.debug && confi
 const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
 // Global minimum spacing between *any* on-wire sends (in ms)
 const MIN_GAP_MS = Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120);
+// Protocol correctness knobs
+const PUSH_FRESH_MS = Number(config.PUSH_FRESH_MS || process.env.PUSH_FRESH_MS || 10000);
+const HB_WHITELIST_STRICT = (config && Object.prototype.hasOwnProperty.call(config, 'HB_WHITELIST_STRICT')) ? !!config.HB_WHITELIST_STRICT : true;
+const HANDSHAKE_RETRY_MS = Number(config.HANDSHAKE_RETRY_MS || process.env.HANDSHAKE_RETRY_MS || 0);
 
 try { fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
@@ -231,7 +235,13 @@ function connectToServer(target) {
       connectedServer = target;
       resetRecv();
       socket.on('data', appendRecv);
-      try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
+		try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
+		// Optional: retry handshake once after a short delay if configured
+		try {
+		  if (HANDSHAKE_RETRY_MS > 0) setTimeout(() => {
+			try { if (tcpClient === socket && typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
+		  }, HANDSHAKE_RETRY_MS);
+		} catch (_) {}
       done = true; resolve();
     });
     socket.once('timeout', () => { if (!done) { socket.destroy(); reject(new Error('TCP connection timeout')); } });
@@ -482,10 +492,13 @@ function loadWhitelistFromHomebridgeSync() {
 }
 
 function isWhitelisted(m, s, b) {
-  // Empty whitelist means "deny all" for safety; change to `return true` if you prefer allow-all
-  if (WHITELIST.size === 0) return false;
+  // Configurable empty-whitelist policy:
+  //  - HB_WHITELIST_STRICT = true  -> deny-all when empty (safe default)
+  //  - HB_WHITELIST_STRICT = false -> allow-all when empty
+  if (WHITELIST.size === 0) return HB_WHITELIST_STRICT ? false : true;
   return WHITELIST.has(keyOf(m, s, b));
 }
+
 
 function setState(m, s, b, value) {
   const k = keyOf(m, s, b);
@@ -586,6 +599,26 @@ function processIncomingLineForRGS(rawLine) {
   }
 }
 
+// Parse helpers for detailed replies (use RegExp constructors to avoid canvas regex literal issues)
+function parseRgsLine(text) {
+  const re = new RegExp('(?:^|\\\\s)RGS#?\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(-?\\\\d+)\\\\b');
+  const m = String(text).match(re);
+  return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
+}
+function parseVgsLine(text) {
+  const re = new RegExp('(?:^|\\\\s)VGS#?\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(-?\\\\d+)\\\\b');
+  const m = String(text).match(re);
+  return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
+}
+function parseStateFromAny(text) {
+  const r = parseRgsLine(text) || parseVgsLine(text);
+  if (r) return { key: vgsKey(r.m, r.s, r.b), value: r.v ? 1 : 0, raw: String(text) };
+  const reBare = new RegExp('(?:^|\\\\s)([01])(?:\\\\s|$)');
+  const mb = String(text).match(reBare);
+  if (mb) return { key: null, value: Number(mb[1]) ? 1 : 0, raw: String(text) };
+  return null;
+}
+
 function onSWEvent({ m, s, b, v }) {
   if (PUSH_DEBUG) logLine(`PUSH heard SW ${m}/${s}/${b} -> ${v}`);
   if (!isWhitelisted(m, s, b)) return; // ignore devices not exposed to HB
@@ -611,9 +644,12 @@ function onSWEvent({ m, s, b, v }) {
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
   const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
-  const m01 = String(raw).match(/\u0008([01])\u0008/); // NOTE: parser fixed in later phases
-  return m01 ? Number(m01[1]) : 0;
+  const parsed = parseStateFromAny(raw);
+  if (parsed && (parsed.key === null || parsed.key === vgsKey(m, s, b))) return parsed.value;
+  const mBare = String(raw).trim().match(/^([01])$/);
+  return mBare ? Number(mBare[1]) : 0;
 }
+
 
 // Helper: consistent formatting for /status/vgs responses
 function sendFormatted(res, format, value, raw) {
@@ -823,7 +859,7 @@ app.get('/status/vgs', async (req, res) => {
     // FAST PATH: serve from push STATE if fresh (10s)
     const kState = keyOf(m, s, b);
     const st = STATE.get(kState);
-    if (st && (now - st.ts) < 10_000) {
+	if (st && (now - st.ts) < PUSH_FRESH_MS) {
       const value = st.value;
       if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
       if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
@@ -851,10 +887,11 @@ app.get('/status/vgs', async (req, res) => {
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
       if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-      const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
-      const m01 = String(raw).match(/\u0008([01])\u0008/); // NOTE: parser fixed in later phases
-      const value = m01 ? Number(m01[1]) : null;
-      const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+	const parsed = parseStateFromAny(raw);
+	const value = parsed ? parsed.value : null;
+	const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+
       VGS_CACHE.set(key, rec);
       return { value, raw: String(raw), bytes: String(raw).length };
     })();
