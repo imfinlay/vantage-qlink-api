@@ -112,6 +112,38 @@
 
 <script>
   const $ = (sel) => document.querySelector(sel);
+  
+// ---- helpers & prefs ----
+function fetchWithTimeout(url, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs == null ? 8000 : opts.timeoutMs);
+  const ctl = new AbortController();
+  const id = setTimeout(() => ctl.abort(new Error('timeout')), Math.max(1, timeoutMs));
+  const p = fetch(url, { ...opts, signal: opts.signal || ctl.signal });
+  p.finally(() => clearTimeout(id));
+  return p;
+}
+
+function loadPrefs(){
+  try { const t = localStorage.getItem('vantage_ui_prefs'); return t ? JSON.parse(t) : {}; }
+  catch(_) { return {}; }
+}
+function savePrefs(){
+  try {
+    const prefs = {
+      logLimit: Number($('#log-limit')?.value || 200),
+      logInterval: Number($('#log-interval')?.value || 2000),
+      autoScroll: !!$('#auto-scroll')?.checked,
+      serverIndex: Number($('#server-select')?.value || 0),
+      modifier: (document.querySelector('input[name="modifier"]:checked') || {}).value || ''
+    };
+    localStorage.setItem('vantage_ui_prefs', JSON.stringify(prefs));
+  } catch(_) {}
+}
+
+// globals used by tailing logic
+let currentLogFetchAbort = null;
+let tailBusy = false;
+const LOG_DOM_CAP = 1000;
 
   async function getJSON(url, opts = {}) {
     const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
@@ -146,30 +178,26 @@
     return parts.join(' ');
   }
 
-  async function populateServers() {
-    try {
-      const data = await getJSON('/servers');
-      const sel = document.getElementById('server-select');
-      sel.innerHTML = '';
-      for (const s of (data.servers || [])) {
-        const opt = document.createElement('option');
-        opt.value = s.index;
-        opt.textContent = `${s.name} (${s.host}:${s.port})`;
-        sel.appendChild(opt);
-      }
-      const prefs = loadPrefs();
-      if (prefs && typeof prefs.serverIndex === 'number') sel.value = String(prefs.serverIndex);
-      sel.addEventListener('change', savePrefs);
-      /* removed servers pane */
-    } catch (e) {
-      /* removed servers pane */
+async function populateServers() {
+  try {
+    const data = await getJSON('/servers');
+    const sel = document.getElementById('server-select');
+    if (!sel) return; // pane removed -> skip gracefully
+    sel.innerHTML = '';
+    for (const s of (data.servers || [])) {
+      const opt = document.createElement('option');
+      opt.value = s.index;
+      opt.textContent = `${s.name} (${s.host}:${s.port})`;
+      sel.appendChild(opt);
     }
+    const prefs = loadPrefs();
+    if (prefs && typeof prefs.serverIndex === 'number') sel.value = String(prefs.serverIndex);
+    sel.addEventListener('change', savePrefs);
+  } catch (e) {
+    // optional: console.warn('populateServers failed', e);
   }
-      /* removed servers pane */
-    } catch (e) {
-      /* removed servers pane */
-    }
-  }
+}
+
 
   async function onSendClick() {
     const input = document.getElementById('command-input');
@@ -221,46 +249,45 @@
     }
   }
 
-  async function doLogFetchOnce(){
-    if (tailBusy) return; tailBusy = true;
-    try {
-      const limit = Number(document.getElementById('log-limit').value || 200);
-      if (currentLogFetchAbort) { try { currentLogFetchAbort.abort(); } catch(_){} }
-      currentLogFetchAbort = new AbortController();
-      const timeoutMs = Math.max(2000, Number(document.getElementById('log-interval').value || 2000) * 2);
-      const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
-      const t = await r.text();
-      const el = document.getElementById('log-container');
-      el.innerHTML = '';
-      // Normalize newlines once, then split
-      const t2 = t.replace(/
-/g, '
-').replace(//g, '
-');
-      const lines = t2.split('
-');
-      const frag = document.createDocumentFragment();
-      for (const rawLine of lines) {
-        if (!rawLine) continue;
-        const { node } = renderLogLinePretty(rawLine);
-        frag.appendChild(node);
-      }
-      el.appendChild(frag);
-      // Cap DOM nodes
-      while (el.childNodes.length > LOG_DOM_CAP) el.removeChild(el.firstChild);
-      autoScrollIfNeeded();
-    } catch (e) {
-      clientLog('log fetch failed: ' + (e && e.message ? e.message : e));
-    } finally {
-      tailBusy = false;
-      currentLogFetchAbort = null;
+async function doLogFetchOnce() {
+  if (tailBusy) return; tailBusy = true;
+  try {
+    const limit = Number(document.getElementById('log-limit')?.value || 200);
+    if (currentLogFetchAbort) { try { currentLogFetchAbort.abort(); } catch(_){} }
+    currentLogFetchAbort = new AbortController();
+    const interval = Number(document.getElementById('log-interval')?.value || 2000);
+    const timeoutMs = Math.max(2000, interval * 2);
+
+    // If your server returns text (recommended):
+    const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
+    const t = await r.text();
+
+    // If your server returns JSON instead, use this alternative:
+    // const data = await getJSON(`/logs?limit=${limit}`, { timeoutMs });
+    // const t = (Array.isArray(data.lines) ? data.lines : []).join('\n');
+
+    const el = document.getElementById('log-container');
+    if (!el) return;
+
+    el.innerHTML = '';
+    const t2 = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = t2.split('\n');
+    const frag = document.createDocumentFragment();
+    for (const rawLine of lines) {
+      if (!rawLine) continue;
+      const { node } = renderLogLinePretty(rawLine);
+      frag.appendChild(node);
     }
+    el.appendChild(frag);
+    while (el.childNodes.length > LOG_DOM_CAP) el.removeChild(el.firstChild);
+    autoScrollIfNeeded();
+  } catch (e) {
+    clientLog('log fetch failed: ' + (e && e.message ? e.message : e));
+  } finally {
+    tailBusy = false;
+    currentLogFetchAbort = null;
   }
-      autoScrollIfNeeded();
-    } catch (e) {
-      clientLog('log fetch failed: ' + e.message);
-    }
-  }
+}
 
   function renderLogLine(line){
     var node = document.createElement('div');
@@ -385,20 +412,19 @@
     const c = document.getElementById('log-container');
     c.scrollTop = c.scrollHeight + 1000;
   }
-  function toggleTail(){
-    const btn = document.getElementById('tail-toggle');
-    if (tailTimer) { clearInterval(tailTimer); tailTimer = null; btn.textContent = 'Start Tail'; }
-    else {
-      const base = Math.max(250, Number(document.getElementById('log-interval').value || 2000));
-      tailTimer = setInterval(doLogFetchOnce, base);
-      btn.textContent = 'Stop Tail';
-    }
+  
+function toggleTail(){
+  const btn = document.getElementById('tail-toggle');
+  if (tailTimer) {
+    clearInterval(tailTimer);
+    tailTimer = null;
+    btn.textContent = 'Start Tail';
+  } else {
+    const base = Math.max(250, Number(document.getElementById('log-interval')?.value || 2000));
+    tailTimer = setInterval(doLogFetchOnce, base);
+    btn.textContent = 'Stop Tail';
   }
-    else {
-      tailTimer = setInterval(doLogFetchOnce, Math.max(250, Number(document.getElementById('log-interval').value || 2000)) );
-      btn.textContent = 'Stop Tail';
-    }
-  }
+}
 
   function clearLogView(){ document.getElementById('log-container').textContent = ''; }
 
