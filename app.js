@@ -958,29 +958,22 @@ app.get('/status/vgs', async (req, res) => {
     const st = STATE.get(kState);
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
       const value = st.value;
-      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
-	  if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (toOn(value) ? 'true' : 'false')); }
-      return res.json({ ok:true, sent: `(push-cache) ${cmd}`, state: value, raw: String(value), bytes: 1, cached: true });
+	return sendFormatted(res, fmt, value, String(value));
     }
 
     // Serve fresh VGS cache immediately
     const cached = VGS_CACHE.get(key);
     if (cached && (now - cached.ts) < cacheMs) {
       const value = cached.value;
-      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
-	  if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (toOn(value) ? 'true' : 'false')); }
-
-      return res.json({ ok:true, sent: `(cached) ${cmd}`, state: value, raw: cached.raw, bytes: cached.bytes, cached: true });
+ 	  return sendFormatted(res, fmt, cached.value, cached.raw);
     }
 
     // Coalesce concurrent identical VGS polls
     if (VGS_INFLIGHT.has(key)) {
       const infl = await VGS_INFLIGHT.get(key);
       const value = infl.value;
-      if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(value == null ? '' : String(value)); }
-      if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(value == null ? '' : (value ? 'true' : 'false')); }
-      return res.json({ ok:true, sent: `(coalesced) ${cmd}`, state: value, raw: infl.raw, bytes: infl.bytes, cached: false });
-    }
+	  return sendFormatted(res, fmt, infl.value, infl.raw);
+
 
     // Start a new on-wire poll with optional jitter and queue spacing
     const p = (async () => {
@@ -998,11 +991,8 @@ app.get('/status/vgs', async (req, res) => {
     let out;
     try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
 
-    if (fmt === 'raw') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : String(out.value)); }
-    if (fmt === 'bool') { res.type('text/plain'); return res.status(200).send(out.value == null ? '' : (toOn(out.value) ? 'true' : 'false')); }
+	return sendFormatted(res, fmt, out.value, out.raw);
 
-
-    return res.json({ ok:true, sent: cmd, state: out.value, raw: out.raw, bytes: out.bytes });
   } catch (err) {
     logLine(`VGS status error: ${err && err.message ? err.message : String(err)}`);
     // Try stale cache first, based on m/s/b from the query
