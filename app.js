@@ -679,31 +679,28 @@ function processIncomingLineForRGS(rawLine) {
 
 // Parse helpers for detailed replies (use RegExp constructors to avoid canvas regex literal issues)
 function parseRgsLine(text) {
-  const re = new RegExp('(?:^|\\\\s)RGS#?\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(-?\\\\d+)\\\\b');
+  // Matches: RGS# m s b v  (or RGS m s b v)
+  const re = new RegExp('(?:^|\\s)RGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
 }
+
 function parseVgsLine(text) {
-  const re = new RegExp('(?:^|\\\\s)VGS#?\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(\\\\d+)\\\\s+(-?\\\\d+)\\\\b');
+  // Matches: VGS# m s b v  (or VGS m s b v)
+  const re = new RegExp('(?:^|\\s)VGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
 }
-/**
- * Parse a state value from any supported reply form:
- *  - `RGS# m s b v`
- *  - `VGS# m s b v`
- *  - bare `0|1`
- * @param {string} text
- * @returns {{key:string|null,value:0|1,raw:string}|null}
- */
+
 function parseStateFromAny(text) {
   const r = parseRgsLine(text) || parseVgsLine(text);
   if (r) return { key: vgsKey(r.m, r.s, r.b), value: r.v ? 1 : 0, raw: String(text) };
-  const reBare = new RegExp('(?:^|\\\\s)([01])(?:\\\\s|$)');
+  const reBare = new RegExp('(?:^|\\s)([01])(?:\\s|$)');
   const mb = String(text).match(reBare);
   if (mb) return { key: null, value: Number(mb[1]) ? 1 : 0, raw: String(text) };
   return null;
 }
+
 
 function onSWEvent({ m, s, b, v }) {
   if (PUSH_DEBUG) logLine(`PUSH heard SW ${m}/${s}/${b} -> ${v}`);
