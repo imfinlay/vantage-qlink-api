@@ -1,23 +1,26 @@
 'use strict';
 
-// =========================================================
-// app.js (Queued send + VGS coalesce/cache + priority + jitter + HB whitelist + VOS push)
-// - Serves /public (index.html)
-// - HTTP -> TCP bridge with connect/disconnect/send
-// - /commands  : expose commands.csv (rich)
-// - /logs      : tail the app log
-// - /recv      : expose recent TCP bytes (utf8/hex/base64)
-// - /test/vsw  : press/release a VSW (for HomeKit etc.)
-// - /status/vgs: poll a switch state with VGS <m> <s> <b>
-//   Formats:
-//     * format=raw  -> text/plain "0" or "1" (empty if unknown)
-//     * format=bool -> text/plain "true" or "false" (empty if unknown)
-//     * (default)   -> JSON { ok, sent, state, raw, bytes, cached? }
-// - Logs API-originated commands and HTTP polling attempts
-// - Serializes TCP I/O to prevent mixed replies + short cache & coalescing for VGS
-// - Global min inter-command gap (MIN_GAP_MS), priority queue, jitter, cacheMs param
-// - NEW: Homebridge-driven whitelist + VOS (SW m s b v) event ingest -> one-shot VGS confirm + state cache
-// =========================================================
+/**
+ * @file Vantage QLink API bridge
+ *
+ * Serves a small HTTP API and static UI to interact with a Vantage QLink controller over TCP.
+ *
+ * Features:
+ * - Serves `/public/index.html`
+ * - HTTP → TCP bridge with `/connect`, `/disconnect`, `/send`
+ * - `/commands`  : expose `commands.csv` (rich list)
+ * - `/logs`      : tail the app log (non-blocking stream + in‑memory ring)
+ * - `/recv`      : show recent TCP bytes (utf8/hex/base64)
+ * - `/test/vsw`  : trigger a VSW press/release
+ * - `/status/vgs`: poll switch state via `VGS# <m> <s> <b>`; parses `RGS#` / `VGS#` replies and bare `0|1`
+ *   - `format=raw`  → text/plain `0` or `1` (empty if unknown)
+ *   - `format=bool` → text/plain `true` or `false` (empty if unknown)
+ *   - default JSON  → `{ ok, sent, state, raw, bytes, cached? }`
+ *
+ * Runtime behavior:
+ * - Serialized TCP I/O (global `MIN_GAP_MS`), VGS coalescing, short cache window
+ * - Homebridge-driven whitelist; VOS `SW m s b v` push → one‑shot `VGS#` confirm → state cache
+ */
 
 const path = require('path');
 const fs = require('fs');
@@ -221,6 +224,13 @@ function ensureDisconnected() {
   } catch (_) {}
 }
 
+/**
+ * Establish a TCP connection to the target Vantage server.
+ * Enables Nagle off (NoDelay), attaches the RX handler, sends HANDSHAKE once
+ * (and optionally retries after `HANDSHAKE_RETRY_MS`).
+ * @param {{name?:string, host:string, port:number}} target
+ * @returns {Promise<void>}
+ */
 function connectToServer(target) {
   return new Promise((resolve, reject) => {
     ensureDisconnected();
@@ -252,6 +262,11 @@ function connectToServer(target) {
   });
 }
 
+/**
+ * Write raw data to the active TCP socket.
+ * @param {Buffer|string} data
+ * @returns {Promise<void>}
+ */
 function sendToTCP(data) {
   return new Promise((resolve, reject) => {
     if (!tcpClient) return reject(new Error('Not connected'));
@@ -263,6 +278,11 @@ function sendToTCP(data) {
 }
 
 // Log API commands before sending
+/**
+ * Log an API command and send it with the configured line ending.
+ * @param {string} cmd Command without trailing newline
+ * @returns {Promise<void>}
+ */
 function sendCmdLogged(cmd) {
   try { logLine(`CMD/API -> ${cmd}`); } catch (_) {}
   return sendToTCP(cmd + NL);
@@ -314,6 +334,14 @@ let __queue = []; // items: { fn, priority, resolve, reject, label, enqueuedAt }
 let __pumping = false;
 let __lastSendAt = 0;
 
+/**
+ * Schedule a function to run inside the global on‑wire queue with an optional priority.
+ * Higher `priority` executes earlier; spacing is enforced by `MIN_GAP_MS`.
+ * @template T
+ * @param {() => Promise<T>} taskFn
+ * @param {{priority?:number,label?:string}} [opts]
+ * @returns {Promise<T>}
+ */
 function runQueued(taskFn, { priority = 0, label = '' } = {}) {
   return new Promise((resolve, reject) => {
     const item = { fn: taskFn, priority, resolve, reject, label, enqueuedAt: Date.now() };
@@ -354,9 +382,21 @@ const VGS_INFLIGHT = new Map(); // key -> Promise<{ value, raw, bytes }>
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
 
 // Awaiters: allow parallel VGS requests without holding the queue
+// Per-key awaiters (coalesced VGS polls resolve here)
 const AWAITERS = new Map();
+// FIFO key order used to map bare 0/1 replies when controller omits address
 const VGS_WAIT_ORDER = [];
-const AWAITERS_MAX_PER_KEY = Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200); // FIFO of keys awaiting a reply (for bare 0/1 fallbacks) // key -> [{resolve,reject,timeout}]
+// Safety bound to avoid memory growth during controller hiccups
+const AWAITERS_MAX_PER_KEY = Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200);
+/**
+ * Register an awaiter for a `VGS# m s b` reply and enforce a timeout.
+ * The actual on‑wire send is performed elsewhere; this only tracks the response.
+ * @param {number} m
+ * @param {number} s
+ * @param {number} b
+ * @param {number} timeoutMs
+ * @returns {Promise<string>} Resolves with the raw line containing the reply
+ */
 function awaitVGS(m, s, b, timeoutMs) {
   const key = vgsKey(m, s, b);
   return new Promise((resolve, reject) => {
@@ -379,6 +419,16 @@ function awaitVGS(m, s, b, timeoutMs) {
 // Helper: register awaiter and send on-wire *inside* the queue,
 // so the timeout starts just before the write; the queue is released
 // immediately after the write (reply resolves later via AWAITERS).
+/**
+ * Queue a `VGS#` send and attach an awaiter so the reply can resolve asynchronously
+ * (the queue is released immediately after the write).
+ * @param {number} m
+ * @param {number} s
+ * @param {number} b
+ * @param {string} cmd Command string (e.g., `VGS# m s b`)
+ * @param {number} maxMs Timeout in milliseconds
+ * @returns {Promise<string>} Raw reply text captured by the awaiter
+ */
 function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
   return new Promise((resolve, reject) => {
     runQueued(async () => {
@@ -516,6 +566,11 @@ function setState(m, s, b, value) {
   }
 }
 
+/**
+ * Incrementally parse incoming bytes into lines and dispatch to line handlers.
+ * Accepts both `\r`, `\n`, and `\r\n` as delimiters.
+ * @param {string} chunkUtf8
+ */
 function processIncomingText(chunkUtf8) {
   INCOMING_TEXT_BUF += chunkUtf8;
   // split on CR or LF boundaries
@@ -610,6 +665,14 @@ function parseVgsLine(text) {
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
 }
+/**
+ * Parse a state value from any supported reply form:
+ *  - `RGS# m s b v`
+ *  - `VGS# m s b v`
+ *  - bare `0|1`
+ * @param {string} text
+ * @returns {{key:string|null,value:0|1,raw:string}|null}
+ */
 function parseStateFromAny(text) {
   const r = parseRgsLine(text) || parseVgsLine(text);
   if (r) return { key: vgsKey(r.m, r.s, r.b), value: r.v ? 1 : 0, raw: String(text) };
@@ -641,6 +704,13 @@ function onSWEvent({ m, s, b, v }) {
   PENDING.set(k, timer);
 }
 
+/**
+ * One‑shot confirmation read for a switch using `VGS#`.
+ * @param {number} m
+ * @param {number} s
+ * @param {number} b
+ * @returns {Promise<0|1>} Parsed switch state (0/1)
+ */
 async function confirmOneVGS(m, s, b) {
   const cmd = `VGS# ${m} ${s} ${b}`;
   const raw = await sendVGSWithAwaiter(m, s, b, cmd, 2000);
@@ -652,6 +722,13 @@ async function confirmOneVGS(m, s, b) {
 
 
 // Helper: consistent formatting for /status/vgs responses
+/**
+ * Send a response in one of the supported formats for `/status/vgs`.
+ * @param {import('express').Response} res
+ * @param {string} format `raw` | `bool` | (default JSON)
+ * @param {0|1|null} value
+ * @param {string|null} raw
+ */
 function sendFormatted(res, format, value, raw) {
   try {
     if (format === 'bool') {
@@ -830,7 +907,7 @@ app.post('/test/vsw', async (req, res) => {
 
 // Status: VGS (switch only)
 //   GET /status/vgs?m=2&s=20&b=7[&quietMs=200&maxMs=1200][&cacheMs=750&jitterMs=300][&format=raw|bool]
-//   - Sends "VGS m s b" and returns state
+//   - Sends "VGS# m s b" and returns state (parses RGS#/VGS# replies; falls back to bare 0/1)
 //   - format=raw  -> text/plain "0" or "1" (empty if none)
 //   - format=bool -> text/plain "true" or "false" (empty if none)
 //   - default JSON -> { ok, sent, state, raw, bytes, cached? }
@@ -856,7 +933,7 @@ app.get('/status/vgs', async (req, res) => {
     const now = Date.now();
     const fmt = String(req.query.format || '').toLowerCase();
 
-    // FAST PATH: serve from push STATE if fresh (10s)
+    // FAST PATH: serve from push STATE if fresh (PUSH_FRESH_MS)
     const kState = keyOf(m, s, b);
     const st = STATE.get(kState);
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
@@ -979,57 +1056,4 @@ app.get('/logs', (req, res) => {
 });
 
 
-// Recent TCP receive buffer
-app.get('/recv', (req, res) => {
-  const limitRaw = parseInt(req.query.limitBytes, 10);
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), MAX_RECV_BYTES) : 2048;
-  const encoding = (req.query.encoding || 'utf8').toString().toLowerCase();
-  const slice = RECV_BUFFER.slice(Math.max(0, RECV_BUFFER.length - limit));
-  let data;
-  if (encoding === 'hex') data = slice.toString('hex');
-  else if (encoding === 'base64') data = slice.toString('base64');
-  else data = slice.toString('utf8');
-  res.json({ length: slice.length, encoding, data });
-});
-
-// -------------------------------
-// SPA fallback (optional)
-// -------------------------------
-app.get('*', (req, res, next) => {
-  if (
-    req.path.startsWith('/api/') ||
-    req.path.startsWith('/send') ||
-    req.path.startsWith('/connect') ||
-    req.path.startsWith('/disconnect') ||
-    req.path.startsWith('/status') ||
-    req.path.startsWith('/servers') ||
-    req.path.startsWith('/commands') ||
-    req.path.startsWith('/logs') ||
-    req.path.startsWith('/recv') ||
-    req.path.startsWith('/admin') ||
-    req.path.startsWith('/test') ||
-    req.path.startsWith('/whitelist')
-  ) {
-    return next();
-  }
-  const indexPath = path.join(__dirname, 'public', 'index.html');
-  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  return next();
-});
-
-// -------------------------------
-// Start server (when run directly)
-// -------------------------------
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
-
-// Load HB whitelist on boot
-loadWhitelistFromHomebridgeSync();
-
-if (require.main === module) {
-  app.listen(PORT, HOST, () => {
-    console.log(`HTTP to TCP API listening on http://${HOST}:${PORT}`);
-  });
-} else {
-  module.exports = app;
-}
+// Recent TCP rec
