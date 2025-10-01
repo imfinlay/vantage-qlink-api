@@ -538,7 +538,8 @@ function processIncomingText(chunkUtf8) {
     let rest = INCOMING_TEXT_BUF.slice(idx + 1);
     if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     INCOMING_TEXT_BUF = rest;
-    if (line.length) { processIncomingLineForSW(line); c(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
+	if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
+
   }
 
 }
@@ -864,40 +865,41 @@ app.get('/status/vgs', async (req, res) => {
     const now = Date.now();
     const fmt = String(req.query.format || '').toLowerCase();
 
-    const kState = keyOf(m, s, b);
-    const st = STATE.get(kState);
+	// push-state fresh
+	const kState = keyOf(m, s, b);
+	const st = STATE.get(kState);
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
-      const value = st.value;
-	return sendFormatted(res, fmt, value, String(value));
-    }
-
-    const cached = VGS_CACHE.get(key);
-    if (cached && (now - cached.ts) < cacheMs) {
-      const value = cached.value;
- 	  return sendFormatted(res, fmt, cached.value, cached.raw);
- 	  }
-    }
-
-    if (VGS_INFLIGHT.has(key)) {
-      const infl = await VGS_INFLIGHT.get(key);
-      const value = infl.value;
+	  const value = st.value;
+	  return sendFormatted(res, fmt, value, String(value));
+	}
+	
+	// cached
+	const cached = VGS_CACHE.get(key);
+	if (cached && (now - cached.ts) < cacheMs) {
+	  const value = cached.value;
+	  return sendFormatted(res, fmt, cached.value, cached.raw);
+	}  // <-- only one }
+	
+	// in-flight
+	if (VGS_INFLIGHT.has(key)) {
+	  const infl = await VGS_INFLIGHT.get(key);
 	  return sendFormatted(res, fmt, infl.value, infl.raw);
-
-    const p = (async () => {
-      if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
-	const parsed = parseStateFromAny(raw);
-	const value = parsed ? parsed.value : null;
-	const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
-
-      VGS_CACHE.set(key, rec);
-      return { value, raw: String(raw), bytes: String(raw).length };
-    })();
-
-    VGS_INFLIGHT.set(key, p);
-    let out;
-    try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
-
+	}  // <-- add this }
+	
+	// fresh on-wire
+	const p = (async () => {
+	  if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
+	  const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+	  const parsed = parseStateFromAny(raw);
+	  const value = parsed ? parsed.value : null;
+	  const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+	  VGS_CACHE.set(key, rec);
+	  return { value, raw: String(raw), bytes: String(raw).length };
+	})();
+	
+	VGS_INFLIGHT.set(key, p);
+	let out;
+	try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
 	return sendFormatted(res, fmt, out.value, out.raw);
 
   } catch (err) {
