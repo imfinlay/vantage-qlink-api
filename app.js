@@ -5,15 +5,17 @@ const fs = require('fs');
 const net = require('net');
 const express = require('express');
 const os = require('os');
-const connectionsRouter = require('./routes/connection');
-const config = require('./config');
 
+const config = require('./config');
 const LOG_FILE_PATH = config.LOG_FILE_PATH || path.join(__dirname, 'app.log');
 const HANDSHAKE = Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n';
 const NL = (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n'; 
 const PUSH_DEBUG = !!(process.env.PUSH_DEBUG || (config && config.debug && config.debug.push));
+
 const MIN_POLL_INTERVAL_MS = Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400);
+
 const MIN_GAP_MS = Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120);
+
 const PUSH_FRESH_MS = Number(config.PUSH_FRESH_MS || process.env.PUSH_FRESH_MS || 10000);
 const HB_WHITELIST_STRICT = (config && Object.prototype.hasOwnProperty.call(config, 'HB_WHITELIST_STRICT')) ? !!config.HB_WHITELIST_STRICT : true;
 const HANDSHAKE_RETRY_MS = Number(config.HANDSHAKE_RETRY_MS || process.env.HANDSHAKE_RETRY_MS || 0);
@@ -50,32 +52,6 @@ function resetRecv() { RECV_BUFFER = Buffer.alloc(0); INCOMING_TEXT_BUF = ''; }
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
-
-// Mount modular connection routes at root
-const __routerCtx = {
-  express,
-  config,
-  tcp: {
-    isConnected: () => Boolean(tcpClient),
-    server: () => connectedServer,
-  },
-  ensureDisconnected,
-  connectToServer,
-  logLine,
-};
-
-// no prefix so the routes remain /servers, /status, /connect, /disconnect
- app.use(
-   connections({
-     express,
-     config,
-     tcp: {
-       isConnected: () => Boolean(tcpClient),
-       server: () => connectedServer
-     }
-   })
- );
-
 
 const LOG_RING_MAX = Number(process.env.LOG_RING_MAX || (config && config.LOG_RING_MAX) || 2000);
 let LOG_RING = [];
@@ -360,8 +336,11 @@ async function pumpQueue(){
 const VGS_CACHE = new Map(); 
 const VGS_INFLIGHT = new Map(); 
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
+
 const AWAITERS = new Map();
+
 const VGS_WAIT_ORDER = [];
+
 const AWAITERS_MAX_PER_KEY = Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200);
 /**
  * Register an awaiter for a `VGS# m s b` reply and enforce a timeout.
@@ -559,7 +538,8 @@ function processIncomingText(chunkUtf8) {
     let rest = INCOMING_TEXT_BUF.slice(idx + 1);
     if (rest.startsWith('\n') && INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     INCOMING_TEXT_BUF = rest;
-    if (line.length) { processIncomingLineForSW(line); c(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
+	if (line.length) { processIncomingLineForSW(line); processIncomingLineForVGS(line); processIncomingLineForRGS(line); processIncomingLineForBare01(line); }
+
   }
 
 }
@@ -575,6 +555,7 @@ function processIncomingLineForSW(rawLine) {
 }
 
 function processIncomingLineForVGS(rawLine) {
+
   const re = /(?:^|\s)VGS\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
@@ -608,6 +589,7 @@ function processIncomingLineForBare01(rawLine) {
 }
 
 function processIncomingLineForRGS(rawLine) {
+
   const re = /(?:^|\s)RGS#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
@@ -714,65 +696,40 @@ function sendFormatted(res, format, value, raw) {
   }
 }
 
-// Set up framework to move routes to their own files
-const ctx = {
-  // libs
-  express,
+app.get('/servers', (_req, res) => {
+  const list = Array.isArray(config.servers) ? config.servers.map((s, i) => ({ index: i, name: s.name || `Server ${i}` , host: s.host, port: s.port })) : [];
+  res.json({ servers: list });
+});
 
-  // config / constants
-  MIN_POLL_INTERVAL_MS,
-  PUSH_FRESH_MS,
+app.get('/status', (_req, res) => {
+  res.json({ connected: Boolean(tcpClient), server: connectedServer || null });
+});
 
-  // tcp status helpers
-  tcp: {
-    isConnected: () => !!tcpClient,
-    server:      () => connectedServer
-  },
+app.post('/connect', async (req, res) => {
+  try {
+    const { serverIndex } = req.body || {};
+    const list = Array.isArray(config.servers) ? config.servers : [];
+    if (typeof serverIndex !== 'number' || serverIndex < 0 || serverIndex >= list.length) {
+      return res.status(400).json({ message: 'Invalid server index.' });
+    }
+    const target = list[serverIndex];
+    await connectToServer(target);
+    logLine(`Connected to ${target.name || target.host}:${target.port}`);
+    return res.json({ message: `Connected to ${target.name || target.host}:${target.port}` });
+  } catch (err) {
+    logLine(`Connect error: ${err.message}`);
+    return res.status(500).json({ message: 'Failed to connect to the server.' });
+  }
+});
 
-  // low-level helpers
-  logLine,
-  logHttp,
-  sleep,
-  waitQuiet,
-  sendCmdLogged,
-  runQueued,
-  sendVGSWithAwaiter,     // used by /status/vgs and confirmOneVGS
-  confirmOneVGS,          // used by push confirm route logic if you reuse
-  sendFormatted,          // convenience formatter for bool/raw/json replies
+app.post('/disconnect', (_req, res) => {
+  if (!tcpClient) return res.json({ message: 'Already disconnected.' });
+  const target = connectedServer;
+  ensureDisconnected();
+  logLine(`Disconnected from ${target ? (target.name || `${target.host}:${target.port}`) : 'unknown'}`);
+  res.json({ message: 'Disconnected.' });
+});
 
-  // parsing & keys
-  parseStateFromAny,
-  vgsKey,
-  keyOf,
-
-  // caches/coalescing
-  VGS_CACHE,
-  VGS_INFLIGHT,
-
-  // state/whitelist (if a route needs them)
-  STATE,
-  WHITELIST,
-  HB_CONFIG_PATH,
-  WHITELIST_MTIME,
-
-  // recv buffer helpers for /send and /test routes
-  recv: {
-    length: () => RECV_BUFFER.length,
-    slice:  (start, end) => RECV_BUFFER.slice(start, end)
-  },
-
-  // connection helpers for /connect, /disconnect
-  connectToServer,
-  ensureDisconnected,
-  config
-};
-
-/**
-	Routes start here
- */
-/* Moved to connection.js 
- */
- 
 app.post('/send', async (req, res) => {
   try {
     if (!tcpClient) return res.status(400).json({ message: 'Not connected.' });
@@ -908,40 +865,41 @@ app.get('/status/vgs', async (req, res) => {
     const now = Date.now();
     const fmt = String(req.query.format || '').toLowerCase();
 
-    const kState = keyOf(m, s, b);
-    const st = STATE.get(kState);
+	// push-state fresh
+	const kState = keyOf(m, s, b);
+	const st = STATE.get(kState);
 	if (st && (now - st.ts) < PUSH_FRESH_MS) {
-      const value = st.value;
-	return sendFormatted(res, fmt, value, String(value));
-    }
-
-    const cached = VGS_CACHE.get(key);
-    if (cached && (now - cached.ts) < cacheMs) {
-      const value = cached.value;
- 	  return sendFormatted(res, fmt, cached.value, cached.raw);
- 	  }
-    }
-
-    if (VGS_INFLIGHT.has(key)) {
-      const infl = await VGS_INFLIGHT.get(key);
-      const value = infl.value;
+	  const value = st.value;
+	  return sendFormatted(res, fmt, value, String(value));
+	}
+	
+	// cached
+	const cached = VGS_CACHE.get(key);
+	if (cached && (now - cached.ts) < cacheMs) {
+	  const value = cached.value;
+	  return sendFormatted(res, fmt, cached.value, cached.raw);
+	}  // <-- only one }
+	
+	// in-flight
+	if (VGS_INFLIGHT.has(key)) {
+	  const infl = await VGS_INFLIGHT.get(key);
 	  return sendFormatted(res, fmt, infl.value, infl.raw);
-
-    const p = (async () => {
-      if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
-	const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
-	const parsed = parseStateFromAny(raw);
-	const value = parsed ? parsed.value : null;
-	const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
-
-      VGS_CACHE.set(key, rec);
-      return { value, raw: String(raw), bytes: String(raw).length };
-    })();
-
-    VGS_INFLIGHT.set(key, p);
-    let out;
-    try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
-
+	}  // <-- add this }
+	
+	// fresh on-wire
+	const p = (async () => {
+	  if (jitterMs > 0) await sleep(Math.floor(Math.random() * jitterMs));
+	  const raw = await sendVGSWithAwaiter(m, s, b, cmd, maxMs);
+	  const parsed = parseStateFromAny(raw);
+	  const value = parsed ? parsed.value : null;
+	  const rec = { ts: Date.now(), value, raw: String(raw), bytes: String(raw).length };
+	  VGS_CACHE.set(key, rec);
+	  return { value, raw: String(raw), bytes: String(raw).length };
+	})();
+	
+	VGS_INFLIGHT.set(key, p);
+	let out;
+	try { out = await p; } finally { VGS_INFLIGHT.delete(key); }
 	return sendFormatted(res, fmt, out.value, out.raw);
 
   } catch (err) {
