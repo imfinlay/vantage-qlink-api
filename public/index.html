@@ -72,7 +72,11 @@
       <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
       <button class="btn" onclick="clearLogView()">Clear View</button>
     </div>
-    <div id="logging-controls"></div>
+	<div id="logging-controls" style="margin:1rem 0; display:flex; gap:.5rem; align-items:center;">
+	  <button id="logStartBtn" type="button">Start logging</button>
+	  <button id="logStopBtn" type="button">Stop logging</button>
+	  <span id="logStatus" style="margin-left:.5rem; font-family:monospace;"></span>
+	</div>
 	<script src="/js/logging-controls.js" defer></script>
     <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
   </div>
