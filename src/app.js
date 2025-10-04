@@ -24,6 +24,7 @@ app.use(require('./routes/test'));
 app.use(require('./routes/vgs'));
 app.use(require('./routes/admin'));
 app.use(require('./routes/whitelist'));
+app.use(require('./routes/logging')); // <-- new
 
 try { loadWhitelistFromHomebridgeSync(); } catch (_) {}
 
