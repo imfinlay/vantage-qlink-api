@@ -1,40 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TCP Command Console</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 16px; }
-    h1 { margin: 0 0 8px; }
-    h2 { margin: 20px 0 8px; font-size: 1.1rem; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; }
-    .btn { cursor: pointer; padding: 6px 10px; border: 1px solid #888; border-radius: 6px; background:#fafafa; }
-    .btn:hover { background:#f0f0f0; }
-    .btn.primary { background: #0069ff; color: white; border-color: #0060e6; }
-    .btn.primary:hover { background:#0058d9; }
-    input[type="text"], input[type="number"], select { padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover { background: #f7faff; }
-    .monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .small { font-size: 0.85rem; color: #555; }
-    .logLine { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; white-space: pre-wrap; margin: 0; padding: 0; }
-    .logLine .ts { color: #666; margin-right: 4px; }
-    .cat-http { color: #0366d6; }
-    .cat-cmd { color: #795548; }
-    .cat-rx { color: #2e7d32; }
-    .cat-push { color: #6a1b9a; }
-    .cat-error { color: #d32f2f; }
-    /* Pretty tokens */
-    .token { font-weight: 600; }
-    .arrow { color: #999; padding: 0 2px; }
-    .path, .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; }
-    .addr { color: #777; }
-    #log-container { overflow-y: auto; font-size: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; background: #fff; }
-  </style>
+  
 </head>
 <body>
 
@@ -192,7 +163,6 @@ async function populateServers() {
   }
 }
 
-
   async function onSendClick() {
     const input = document.getElementById('command-input');
     const modifier = getSelectedModifier();
@@ -240,7 +210,6 @@ async function refreshStatus() {
     document.getElementById('conn-status').textContent = String(e);
   }
 }
-
 
 async function doLogFetchOnce() {
   if (tailBusy) return; tailBusy = true;
