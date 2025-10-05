@@ -1,5 +1,4 @@
 <!-- /index.html -->
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,7 +22,7 @@
 </header>
 
 <main class="app-main">
-  
+
 <div class="row">
   <label>Server:
     <select id="server-select"></select>
@@ -58,7 +57,7 @@
 <div class="card">
   <h2>Commands</h2>
   <div style="display:flex; gap:8px; align-items:center;">
-    <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." oninput="renderCommandsTable()" /></label>
+    <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." /></label>
     <span class="small">Click a row to copy into the input.</span>
   </div>
   <div style="max-height:260px; overflow-y:auto;">
@@ -75,22 +74,21 @@
   </div>
 </div>
 
-  <div class="card">
-    <h2>Logs Tail</h2>
-    <div class="row log-toolbar" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
-      <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
-      <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
-      <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
-      <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
-      <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
-      <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
-      <button class="btn" onclick="clearLogView()">Clear View</button>
-    </div>
-    <div id="log-container" class="card" style="margin-top:8px;max-height:360px;overflow-y:auto;"></div>
+<div class="card">
+  <h2>Logs Tail</h2>
+  <div class="row log-toolbar" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
+    <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
+    <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
+    <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
+    <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
+    <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
+    <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
+    <button class="btn" onclick="clearLogView()">Clear View</button>
   </div>
+  <div id="log-container" class="card" style="margin-top:8px;max-height:360px;overflow-y:auto;"></div>
+</div>
 
 <script>
-  // ---- helpers & prefs ----
   const $ = (sel) => document.querySelector(sel);
 
   function fetchWithTimeout(url, opts = {}) {
@@ -102,7 +100,16 @@
     return p;
   }
 
-  // globals used by tailing logic
+  // debounce: reduces re-render churn on large lists
+  function debounce(fn, wait = 150) {
+    let t;
+    return function debounced(...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  // ---- logs ----
   let currentLogFetchAbort = null;
   let tailBusy = false;
   let tailTimer = null;
@@ -209,8 +216,7 @@
     autoScrollIfNeeded();
   }
 
-
-  // ---- Server & Command UI helpers ----
+  // ---- Server & Commands ----
   function clientLog(msg) {
     const el = document.getElementById('log-container');
     if (!el) return;
@@ -276,10 +282,8 @@
   }
 
   async function refreshStatus(){
-    let data = null;
     try {
-      data = await getJSON('/status');
-
+      const data = await getJSON('/status');
       const el = document.getElementById('conn-status');
       if (el) el.textContent = data.connected
         ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
@@ -321,31 +325,31 @@
   }
 
   async function populateCommands(){
-  try {
-    const data = await getJSON('/commands');
-    const items = (Array.isArray(data.items) && data.items.length)
-      ? data.items
-      : (Array.isArray(data.commands)
-          ? data.commands.map(c => ({ command: String(c), description: '', params: '' }))
-          : []);
-    window.__items = items;
-    renderCommandsTable();
-    if (!items.length) {
-      const tb = document.getElementById('command-tbody');
-      if (tb) tb.innerHTML = '<tr><td colspan="3"><em>No commands returned.</em></td></tr>';
+    try {
+      const data = await getJSON('/commands');
+      const items = (Array.isArray(data.items) && data.items.length)
+        ? data.items
+        : (Array.isArray(data.commands)
+            ? data.commands.map(c => ({ command: String(c), description: '', params: '' }))
+            : []);
+      window.__items = items;
+      renderCommandsTable();
+      if (!items.length) {
+        const tb = document.getElementById('command-tbody');
+        if (tb) tb.innerHTML = '<tr><td colspan="3"><em>No commands returned.</em></td></tr>';
+      }
+    } catch(e){
+      var tb = document.getElementById('command-tbody');
+      if (tb) tb.innerHTML = '<tr><td colspan="3">Failed to load commands: ' + (e.message || e) + '</td></tr>';
     }
-  } catch(e){
-    var tb = document.getElementById('command-tbody');
-    if (tb) tb.innerHTML = '<tr><td colspan="3">Failed to load commands: ' + (e.message || e) + '</td></tr>';
   }
-}
 
   function renderCommandsTable(){
     const filt = (document.getElementById('cmd-filter') && document.getElementById('cmd-filter').value || '').toLowerCase();
     const items = (window.__items || []).filter(function(it){
-      return String(it.command || '').toLowerCase().indexOf(filt) !== -1 ||
-             String(it.description || '').toLowerCase().indexOf(filt) !== -1 ||
-             String(it.params || '').toLowerCase().indexOf(filt) !== -1;
+      return String(it.command || '').toLowerCase().includes(filt) ||
+             String(it.description || '').toLowerCase().includes(filt) ||
+             String(it.params || '').toLowerCase().includes(filt);
     });
 
     const tb = document.getElementById('command-tbody');
@@ -390,10 +394,14 @@
   }
 
   window.addEventListener('load', async () => {
-  await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
-  toggleTail();
-  await doLogFetchOnce();
-});
+    await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
+    // Debounce re-filtering for smoother typing on large lists
+    const filterEl = document.getElementById('cmd-filter');
+    if (filterEl) filterEl.addEventListener('input', debounce(renderCommandsTable, 150));
+
+    toggleTail();
+    await doLogFetchOnce();
+  });
 </script>
 </main>
 </body>
