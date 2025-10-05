@@ -250,7 +250,7 @@ Open `http://<pi>:3000/`:
   * `#` → detailed (adds `#` after the command token, e.g. `VGS# 2 20 7`)
 * **Wait/Collect**: optionally set `quietMs` and `maxMs` for `/send`
 * **Commands**: searchable table from `commands.csv`; click to copy into the input
-* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll
+* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll, stop/start logging to file, view filtering
 
 > The UI persists preferences (log limit/interval, auto‑scroll, selected server, modifier) in `localStorage`.
 
