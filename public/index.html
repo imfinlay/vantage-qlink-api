@@ -71,6 +71,9 @@
       <button class="btn" id="tail-toggle" onclick="toggleTail()">Stop Tail</button>
       <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
       <button class="btn" onclick="clearLogView()">Clear View</button>
+      <label>Text filter
+  		<input id="log-filter" type="text" placeholder="type to filter..." oninput="doLogFetchOnce()" />
+	  </label>
     </div>
 	<div id="logging-controls" style="margin:1rem 0; display:flex; gap:.5rem; align-items:center;">
 	  <button id="logStartBtn" type="button">Start file logging</button>
@@ -241,6 +244,20 @@ async function doLogFetchOnce() {
     const t2 = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = t2.split('\n');
     const frag = document.createDocumentFragment();
+    
+    // NEW: read the filter text (case-insensitive)
+	const filt = (document.getElementById('log-filter')?.value || '').toLowerCase();
+	
+	for (const rawLine of lines) {
+	  if (!rawLine) continue;
+	  // NEW: simple substring filter
+	  if (filt && rawLine.toLowerCase().indexOf(filt) === -1) continue;
+	
+	  const { node } = renderLogLinePretty(rawLine);
+	  frag.appendChild(node);
+	}
+    
+    
     for (const rawLine of lines) {
       if (!rawLine) continue;
       const { node } = renderLogLinePretty(rawLine);
