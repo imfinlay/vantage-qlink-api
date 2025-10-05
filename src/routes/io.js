@@ -26,11 +26,22 @@ router.post('/send', async (req, res) => {
     if (typeof command === 'string' && command.trim()) {
       const cmd = command.trim();
 
-      const { VALID_COMMANDS } = require('./shared_commands');
-      const base = cmd.replace(/[\r\n]+/g, '').replace(/[$#]+$/g, '').split(/\s+/)[0];
-      if (VALID_COMMANDS.size > 0 && !VALID_COMMANDS.has(cmd) && !VALID_COMMANDS.has(base)) {
-        return res.status(400).json({ message: 'Invalid command.' });
-      }
+	const { VALID_COMMANDS } = require('./shared_commands');
+	
+	// Normalize once
+	const rawCmd = cmd.replace(/[\r\n]+/g, '').trim();
+	const firstToken = rawCmd.split(/\s+/)[0];  // e.g., "V12$"
+	const base = firstToken.replace(/[#$]+$/, ''); // e.g., "V12"
+	
+	// Accept if the whitelist contains any of: full string, first token, or base token
+	if (
+	  VALID_COMMANDS.size > 0 &&
+	  !VALID_COMMANDS.has(rawCmd) &&
+	  !VALID_COMMANDS.has(firstToken) &&
+	  !VALID_COMMANDS.has(base)
+	) {
+	  return res.status(400).json({ message: 'Invalid command.' });
+	}
       payload = cmd + ctx.NL;
       logLine(`CMD -> ${cmd}`);
     } else if (typeof data === 'string' || Buffer.isBuffer(data)) {
