@@ -143,9 +143,7 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const t = await r.text();
 
-		// Normalize line endings and cache
-		const t2 = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-		__logLines = t2.split('\n').filter(Boolean);
+
 		
 		// Draw from cache (filter applied locally)
 		renderLogView();
@@ -284,16 +282,36 @@ async function doDisconnect(){
 }
 
 async function refreshStatus(){
+  let data = null;
   try {
-    const data = await getJSON('/status');
+    data = await getJSON('/status');
+
+    // existing body label
     const el = document.getElementById('conn-status');
-    if (el) el.textContent = data.connected ? ('Connected to ' + (data.server ? (data.server.name || data.server.host) : 'server')) : 'Not connected';
-  } catch(e){ const el = document.getElementById('conn-status'); if (el) el.textContent = String(e && e.message ? e.message : e); }
-  const hdr = document.querySelector('.app-header');
-  if (hdr) hdr.classList.toggle('connected', !!data.connected);
-  const label = document.getElementById('conn-label');
-  if (label) label.textContent = data.connected ? `Connected to ${data.server?.name || data.server?.host || 'server'}` : 'Not connected';
+    if (el) el.textContent = data.connected
+      ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
+      : 'Not connected';
+
+    // ✅ move these inside (or use isConnected computed after the try)
+    const hdr = document.querySelector('.app-header');
+    if (hdr) hdr.classList.toggle('connected', !!data.connected);
+
+    const label = document.getElementById('conn-label');
+    if (label) {
+      const target = data.server?.name || data.server?.host || 'server';
+      label.textContent = data.connected ? `Connected to ${target}` : 'Not connected';
+    }
+  } catch (e) {
+    const el = document.getElementById('conn-status');
+    if (el) el.textContent = String(e && e.message ? e.message : e);
+    // Optionally also reset header pill on error:
+    const hdr = document.querySelector('.app-header');
+    if (hdr) hdr.classList.remove('connected');
+    const label = document.getElementById('conn-label');
+    if (label) label.textContent = 'Not connected';
+  }
 }
+
 
 async function populateServers(){
   try {
