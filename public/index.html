@@ -5,10 +5,23 @@
   <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TCP Command Console</title>
+  <title>Vantage Qlink Command Console</title>
 </head>
 <body>
-  <h1>TCP Command Console</h1>
+<header class="app-header">
+  <div class="bar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span>Vantage Qlink Command Console</span>
+    </div>
+    <span id="hb-status" class="badge">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="conn-label">Not connected</span>
+    </span>
+  </div>
+</header>
+
+<main class="app-main">
   
 <div class="row">
   <label>Server:
@@ -63,7 +76,7 @@
 
   <div class="card">
     <h2>Logs Tail</h2>
-    <div class="row" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
+    <div class="row log-toolbar" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
       <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
       <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
       <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
@@ -276,6 +289,10 @@ async function refreshStatus(){
     const el = document.getElementById('conn-status');
     if (el) el.textContent = data.connected ? ('Connected to ' + (data.server ? (data.server.name || data.server.host) : 'server')) : 'Not connected';
   } catch(e){ const el = document.getElementById('conn-status'); if (el) el.textContent = String(e && e.message ? e.message : e); }
+  const hdr = document.querySelector('.app-header');
+  if (hdr) hdr.classList.toggle('connected', !!data.connected);
+  const label = document.getElementById('conn-label');
+  if (label) label.textContent = data.connected ? `Connected to ${data.server?.name || data.server?.host || 'server'}` : 'Not connected';
 }
 
 async function populateServers(){
@@ -310,15 +327,32 @@ function renderCommandsTable(){
            String(it.description || '').toLowerCase().indexOf(filt) !== -1 ||
            String(it.params || '').toLowerCase().indexOf(filt) !== -1;
   });
+
   const tb = document.getElementById('command-tbody');
   if (!tb) return;
   tb.innerHTML = '';
+
   items.forEach(function(it){
     const tr = document.createElement('tr');
-    const tdCmd = document.createElement('td'); tdCmd.className='monospace'; tdCmd.textContent = it.command || '';
-    const tdDesc = document.createElement('td'); tdDesc.textContent = it.description || '';
-    const tdParams = document.createElement('td'); tdParams.className='monospace'; tdParams.textContent = it.params || '';
-    tr.appendChild(tdCmd); tr.appendChild(tdDesc); tr.appendChild(tdParams);
+
+    const tdCmd = document.createElement('td');
+    tdCmd.className = 'monospace';
+    tdCmd.textContent = it.command || '';
+    tdCmd.setAttribute('data-label', 'Command');
+
+    const tdDesc = document.createElement('td');
+    tdDesc.textContent = it.description || '';
+    tdDesc.setAttribute('data-label', 'Description');
+
+    const tdParams = document.createElement('td');
+    tdParams.className = 'monospace';
+    tdParams.textContent = it.params || '';
+    tdParams.setAttribute('data-label', 'Params');
+
+    tr.appendChild(tdCmd);
+    tr.appendChild(tdDesc);
+    tr.appendChild(tdParams);
+
     tr.addEventListener('click', function(){
       const mod = getSelectedModifier();
       const withMod = buildCommandWithModifier(it.command, mod);
@@ -326,9 +360,11 @@ function renderCommandsTable(){
       const input = document.getElementById('command-input');
       if (input) { input.value = full; input.focus(); }
     });
+
     tb.appendChild(tr);
   });
 }
+
 
   // Initial auto-start tailing
 // Replace the current load handler:
@@ -338,6 +374,6 @@ window.addEventListener('load', async () => {
   await doLogFetchOnce();
 });
 </script>
-
+</main>
 </body>
 </html>
