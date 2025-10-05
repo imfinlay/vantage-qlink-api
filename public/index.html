@@ -165,16 +165,3 @@
 
 </body>
 </html>
-
-/* io.js */
-'use strict';
-const express = require('express');
-const router = express.Router();
-const ctx = require('../core/context');
-const { logLine, tailFile } = require('../core/logger');
-const { sendToTCP, sendCmdLogged } = require('../core/tcp');
-const { runQueued, sleep } = require('../core/queue');
-
-// Existing JS content from io.js goes here
-
-module.exports = router;
