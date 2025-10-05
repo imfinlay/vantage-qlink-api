@@ -1,3 +1,4 @@
+<!-- /index.html -->
 <!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
@@ -80,7 +81,6 @@
       <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
       <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
       <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
-      <!-- NEW: local text filter triggers render only -->
       <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
       <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
       <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
@@ -107,7 +107,6 @@
   let tailBusy = false;
   let tailTimer = null;
   const LOG_DOM_CAP = 1000;
-  // Cache of last fetched lines so filtering is instant and local
   let __logLines = [];
 
   function autoScrollIfNeeded(){
@@ -138,18 +137,15 @@
       const interval = Number($('#log-interval')?.value || 2000);
       const timeoutMs = Math.max(2000, interval * 2);
 
-      // Expect server endpoint /logs?limit=..&format=txt (non-breaking vs your backend)
       const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const t = await r.text();
 
-
-		
-		// Draw from cache (filter applied locally)
-		renderLogView();
+      const lines = String(t || '').split(/\r?\n/).filter(Boolean);
+      __logLines = lines.slice(-limit);
+      renderLogView();
 
     } catch (e) {
-      // Also print errors into the view so user sees them
       const el = $('#log-container');
       if (el) {
         const p = document.createElement('p');
@@ -162,7 +158,6 @@
     }
   }
 
-  // Pretty printer (kept simple; no regex literals)
   function renderLogLinePretty(line){
     const node = document.createElement('div');
     node.className = 'logLine';
@@ -195,7 +190,6 @@
     return { node };
   }
 
-  // NEW: pure renderer that applies the text filter locally
   function renderLogView(){
     const el = $('#log-container');
     if (!el) return;
@@ -216,178 +210,187 @@
   }
 
 
-// ---- Server & Command UI helpers ----
-function clientLog(msg) {
-  const el = document.getElementById('log-container');
-  if (!el) return;
-  const p = document.createElement('p');
-  p.className = 'logLine';
-  p.textContent = '[client] ' + msg;
-  el.appendChild(p);
-}
-
-async function getJSON(url, opts) {
-  opts = opts || {};
-  const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const ct = r.headers.get('content-type') || '';
-  if (ct.indexOf('application/json') !== -1) return await r.json();
-  return JSON.parse(await r.text());
-}
-
-function getSelectedModifier(){
-  const el = document.querySelector('input[name="modifier"]:checked');
-  return el ? el.value : '';
-}
-function buildCommandWithModifier(raw, mod){
-  raw = String(raw || '').trim();
-  if (!mod) return raw;
-  if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
-  const parts = raw.split(/\s+/);
-  if (!parts.length) return raw;
-  parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
-  return parts.join(' ');
-}
-
-async function onSendClick(){
-  try {
-    const input = document.getElementById('command-input');
-    const modifier = getSelectedModifier();
-    const message = buildCommandWithModifier(input.value, modifier);
-    const wait = document.getElementById('wait-response') && document.getElementById('wait-response').checked;
-    const quietMs = Number((document.getElementById('quiet-ms') && document.getElementById('quiet-ms').value) || 0);
-    const maxMs   = Number((document.getElementById('max-ms') && document.getElementById('max-ms').value) || 0);
-    const body = { command: message };
-    if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
-    const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    clientLog(await r.text());
-  } catch(e){ clientLog('send failed: ' + (e.message || e)); }
-}
-
-async function doConnect(){
-  try {
-    const sel = document.getElementById('server-select');
-    const idx = Number(sel && sel.value || 0);
-    const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
-    clientLog(await r.text());
-    await refreshStatus();
-  } catch(e){ clientLog('connect failed: ' + (e.message || e)); }
-}
-async function doDisconnect(){
-  try {
-    const r = await fetch('/disconnect', { method:'POST' });
-    clientLog(await r.text());
-    await refreshStatus();
-  } catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
-}
-
-async function refreshStatus(){
-  let data = null;
-  try {
-    data = await getJSON('/status');
-
-    // existing body label
-    const el = document.getElementById('conn-status');
-    if (el) el.textContent = data.connected
-      ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
-      : 'Not connected';
-
-    // ✅ move these inside (or use isConnected computed after the try)
-    const hdr = document.querySelector('.app-header');
-    if (hdr) hdr.classList.toggle('connected', !!data.connected);
-
-    const label = document.getElementById('conn-label');
-    if (label) {
-      const target = data.server?.name || data.server?.host || 'server';
-      label.textContent = data.connected ? `Connected to ${target}` : 'Not connected';
-    }
-  } catch (e) {
-    const el = document.getElementById('conn-status');
-    if (el) el.textContent = String(e && e.message ? e.message : e);
-    // Optionally also reset header pill on error:
-    const hdr = document.querySelector('.app-header');
-    if (hdr) hdr.classList.remove('connected');
-    const label = document.getElementById('conn-label');
-    if (label) label.textContent = 'Not connected';
+  // ---- Server & Command UI helpers ----
+  function clientLog(msg) {
+    const el = document.getElementById('log-container');
+    if (!el) return;
+    const p = document.createElement('p');
+    p.className = 'logLine';
+    p.textContent = '[client] ' + msg;
+    el.appendChild(p);
   }
-}
 
+  async function getJSON(url, opts) {
+    opts = opts || {};
+    const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const ct = r.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') !== -1) return await r.json();
+    return JSON.parse(await r.text());
+  }
 
-async function populateServers(){
-  try {
-    const data = await getJSON('/servers');
-    const sel = document.getElementById('server-select');
-    if (!sel) return;
-    sel.innerHTML = '';
-    (data.servers || []).forEach(function(s){
-      var opt = document.createElement('option');
-      opt.value = s.index;
-      opt.textContent = (s.name + ' (' + s.host + ':' + s.port + ')');
-      sel.appendChild(opt);
-    });
-  } catch(_){ }
-}
+  function getSelectedModifier(){
+    const el = document.querySelector('input[name="modifier"]:checked');
+    return el ? el.value : '';
+  }
+  function buildCommandWithModifier(raw, mod){
+    raw = String(raw || '').trim();
+    if (!mod) return raw;
+    if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
+    const parts = raw.split(/\s+/);
+    if (!parts.length) return raw;
+    parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
+    return parts.join(' ');
+  }
 
-async function populateCommands(){
+  async function onSendClick(){
+    try {
+      const input = document.getElementById('command-input');
+      const modifier = getSelectedModifier();
+      const message = buildCommandWithModifier(input.value, modifier);
+      const wait = document.getElementById('wait-response') && document.getElementById('wait-response').checked;
+      const quietMs = Number((document.getElementById('quiet-ms') && document.getElementById('quiet-ms').value) || 0);
+      const maxMs   = Number((document.getElementById('max-ms') && document.getElementById('max-ms').value) || 0);
+      const body = { command: message };
+      if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
+      const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      clientLog(await r.text());
+    } catch(e){ clientLog('send failed: ' + (e.message || e)); }
+  }
+
+  async function doConnect(){
+    try {
+      const sel = document.getElementById('server-select');
+      const idx = Number(sel && sel.value || 0);
+      const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
+      clientLog(await r.text());
+      await refreshStatus();
+    } catch(e){ clientLog('connect failed: ' + (e.message || e)); }
+  }
+  async function doDisconnect(){
+    try {
+      const r = await fetch('/disconnect', { method:'POST' });
+      clientLog(await r.text());
+      await refreshStatus();
+    } catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
+  }
+
+  async function refreshStatus(){
+    let data = null;
+    try {
+      data = await getJSON('/status');
+
+      const el = document.getElementById('conn-status');
+      if (el) el.textContent = data.connected
+        ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
+        : 'Not connected';
+
+      const hdr = document.querySelector('.app-header');
+      if (hdr) hdr.classList.toggle('connected', !!data.connected);
+
+      const label = document.getElementById('conn-label');
+      if (label) {
+        const target = data.server?.name || data.server?.host || 'server';
+        label.textContent = data.connected ? `Connected to ${target}` : 'Not connected';
+      }
+    } catch (e) {
+      const el = document.getElementById('conn-status');
+      if (el) el.textContent = String(e && e.message ? e.message : e);
+      const hdr = document.querySelector('.app-header');
+      if (hdr) hdr.classList.remove('connected');
+      const label = document.getElementById('conn-label');
+      if (label) label.textContent = 'Not connected';
+    }
+  }
+
+  async function populateServers(){
+    try {
+      const data = await getJSON('/servers');
+      const sel = document.getElementById('server-select');
+      if (!sel) return;
+      sel.innerHTML = '';
+      (data.servers || []).forEach(function(s){
+        var opt = document.createElement('option');
+        opt.value = s.index;
+        opt.textContent = (s.name + ' (' + s.host + ':' + s.port + ')');
+        sel.appendChild(opt);
+      });
+    } catch(e){
+      clientLog('servers load failed: ' + (e.message || e));
+    }
+  }
+
+  async function populateCommands(){
   try {
     const data = await getJSON('/commands');
-    window.__items = data.items || [];
+    const items = (Array.isArray(data.items) && data.items.length)
+      ? data.items
+      : (Array.isArray(data.commands)
+          ? data.commands.map(c => ({ command: String(c), description: '', params: '' }))
+          : []);
+    window.__items = items;
     renderCommandsTable();
+    if (!items.length) {
+      const tb = document.getElementById('command-tbody');
+      if (tb) tb.innerHTML = '<tr><td colspan="3"><em>No commands returned.</em></td></tr>';
+    }
   } catch(e){
     var tb = document.getElementById('command-tbody');
-    if (tb) tb.innerHTML = '<tr><td colspan="3">' + (e.message || e) + '</td></tr>';
+    if (tb) tb.innerHTML = '<tr><td colspan="3">Failed to load commands: ' + (e.message || e) + '</td></tr>';
   }
 }
-function renderCommandsTable(){
-  const filt = (document.getElementById('cmd-filter') && document.getElementById('cmd-filter').value || '').toLowerCase();
-  const items = (window.__items || []).filter(function(it){
-    return String(it.command || '').toLowerCase().indexOf(filt) !== -1 ||
-           String(it.description || '').toLowerCase().indexOf(filt) !== -1 ||
-           String(it.params || '').toLowerCase().indexOf(filt) !== -1;
-  });
 
-  const tb = document.getElementById('command-tbody');
-  if (!tb) return;
-  tb.innerHTML = '';
-
-  items.forEach(function(it){
-    const tr = document.createElement('tr');
-
-    const tdCmd = document.createElement('td');
-    tdCmd.className = 'monospace';
-    tdCmd.textContent = it.command || '';
-    tdCmd.setAttribute('data-label', 'Command');
-
-    const tdDesc = document.createElement('td');
-    tdDesc.textContent = it.description || '';
-    tdDesc.setAttribute('data-label', 'Description');
-
-    const tdParams = document.createElement('td');
-    tdParams.className = 'monospace';
-    tdParams.textContent = it.params || '';
-    tdParams.setAttribute('data-label', 'Params');
-
-    tr.appendChild(tdCmd);
-    tr.appendChild(tdDesc);
-    tr.appendChild(tdParams);
-
-    tr.addEventListener('click', function(){
-      const mod = getSelectedModifier();
-      const withMod = buildCommandWithModifier(it.command, mod);
-      const full = it.params ? (withMod + ' ' + it.params) : withMod;
-      const input = document.getElementById('command-input');
-      if (input) { input.value = full; input.focus(); }
+  function renderCommandsTable(){
+    const filt = (document.getElementById('cmd-filter') && document.getElementById('cmd-filter').value || '').toLowerCase();
+    const items = (window.__items || []).filter(function(it){
+      return String(it.command || '').toLowerCase().indexOf(filt) !== -1 ||
+             String(it.description || '').toLowerCase().indexOf(filt) !== -1 ||
+             String(it.params || '').toLowerCase().indexOf(filt) !== -1;
     });
 
-    tb.appendChild(tr);
-  });
-}
+    const tb = document.getElementById('command-tbody');
+    if (!tb) return;
+    tb.innerHTML = '';
 
+    items.forEach(function(it){
+      const tr = document.createElement('tr');
 
-  // Initial auto-start tailing
-// Replace the current load handler:
-window.addEventListener('load', async () => {
-  try { await populateServers(); await refreshStatus(); await populateCommands(); } catch(e){}
+      const tdCmd = document.createElement('td');
+      tdCmd.className = 'monospace';
+      tdCmd.textContent = it.command || '';
+      tdCmd.setAttribute('data-label', 'Command');
+
+      const tdDesc = document.createElement('td');
+      tdDesc.textContent = it.description || '';
+      tdDesc.setAttribute('data-label', 'Description');
+
+      const tdParams = document.createElement('td');
+      tdParams.className = 'monospace';
+      tdParams.textContent = it.params || '';
+      tdParams.setAttribute('data-label', 'Params');
+
+      tr.appendChild(tdCmd);
+      tr.appendChild(tdDesc);
+      tr.appendChild(tdParams);
+
+      tr.addEventListener('click', function(){
+        const mod = getSelectedModifier();
+        const withMod = buildCommandWithModifier(it.command, mod);
+        const full = it.params ? (withMod + ' ' + it.params) : withMod;
+        const input = document.getElementById('command-input');
+        if (input) { input.value = full; input.focus(); }
+      });
+
+      tb.appendChild(tr);
+    });
+
+    if (!items.length) {
+      tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
+    }
+  }
+
+  window.addEventListener('load', async () => {
+  await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
   toggleTail();
   await doLogFetchOnce();
 });
