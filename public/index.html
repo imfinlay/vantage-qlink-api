@@ -1,303 +1,130 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TCP Command Console</title>
-  
 </head>
 <body>
-
   <h1>TCP Command Console</h1>
-  <div class="row">
-    <label>Server:
-      <select id="server-select"></select>
-    </label>
-    <button class="btn" onclick="doConnect()">Connect</button>
-    <button class="btn" onclick="doDisconnect()">Disconnect</button>
-    <span id="conn-status" class="small">Not connected</span>
-  </div>
-
-  <div class="card">
-    <h2>Send Command</h2>
-    <div class="row">
-      <input id="command-input" type="text" placeholder="Type command (e.g., VGS 2 20 7)" size="40" class="monospace" />
-      <button class="btn primary" onclick="onSendClick()">Send</button>
-    </div>
-
-    <div style="margin-top: 8px;" class="row">
-      <strong>Response Mode:</strong>
-      <label><input type="radio" name="modifier" value="" checked /> None</label>
-      <label><input type="radio" name="modifier" value="$" /> $ (short, after command)</label>
-      <label><input type="radio" name="modifier" value="#" /> # (detailed, after command)</label>
-    </div>
-
-    <div class="row" style="margin-top: 8px;">
-      <strong>Wait / Collect:</strong>
-      <label><input id="wait-response" type="checkbox" /> Wait for response</label>
-      <label>quietMs <input id="quiet-ms" type="number" min="0" value="300" /></label>
-      <label>maxMs <input id="max-ms" type="number" min="0" value="2000" /></label>
-    </div>
-
-  </div>
-
-  <div class="card">
-    <h2>Commands</h2>
-    <div style="display: flex; gap: 8px; align-items: center;">
-      <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." oninput="renderCommandsTable()" /></label>
-      <span class="small">Click a row to copy into the input.</span>
-    </div>
-    <div style="max-height: 260px; overflow-y: auto;">
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 200px;">Command</th>
-            <th>Description</th>
-            <th style="width: 300px;">Params</th>
-          </tr>
-        </thead>
-        <tbody id="command-tbody"></tbody>
-      </table>
-    </div>
-  </div>
 
   <div class="card">
     <h2>Logs Tail</h2>
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
       <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
       <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
       <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
-      <button class="btn" id="tail-toggle" onclick="toggleTail()">Stop Tail</button>
+      <!-- NEW: local text filter triggers render only -->
+      <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
+      <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
       <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
       <button class="btn" onclick="clearLogView()">Clear View</button>
-      <label>Text filter
-  		<input id="log-filter" type="text" placeholder="type to filter..." oninput="doLogFetchOnce()" />
-	  </label>
     </div>
-	<div id="logging-controls" style="margin:1rem 0; display:flex; gap:.5rem; align-items:center;">
-	  <button id="logStartBtn" type="button">Start file logging</button>
-	  <button id="logStopBtn" type="button">Stop file logging</button>
-	  <span id="logStatus" style="margin-left:.5rem; font-family:monospace;"></span>
-	</div>
-	<script src="/js/logging-controls.js" defer></script>
-    <div id="log-container" class="card" style="margin-top: 8px; max-height: 360px;"></div>
+    <div id="log-container" class="card" style="margin-top:8px;max-height:360px;overflow-y:auto;"></div>
   </div>
 
 <script>
+  // ---- helpers & prefs ----
   const $ = (sel) => document.querySelector(sel);
-  
-// ---- helpers & prefs ----
-function fetchWithTimeout(url, opts = {}) {
-  const timeoutMs = Number(opts.timeoutMs == null ? 8000 : opts.timeoutMs);
-  const ctl = new AbortController();
-  const id = setTimeout(() => ctl.abort(new Error('timeout')), Math.max(1, timeoutMs));
-  const p = fetch(url, { ...opts, signal: opts.signal || ctl.signal });
-  p.finally(() => clearTimeout(id));
-  return p;
-}
 
-function loadPrefs(){
-  try { const t = localStorage.getItem('vantage_ui_prefs'); return t ? JSON.parse(t) : {}; }
-  catch(_) { return {}; }
-}
-function savePrefs(){
-  try {
-    const prefs = {
-      logLimit: Number($('#log-limit')?.value || 200),
-      logInterval: Number($('#log-interval')?.value || 2000),
-      autoScroll: !!$('#auto-scroll')?.checked,
-      serverIndex: Number($('#server-select')?.value || 0),
-      modifier: (document.querySelector('input[name="modifier"]:checked') || {}).value || ''
-    };
-    localStorage.setItem('vantage_ui_prefs', JSON.stringify(prefs));
-  } catch(_) {}
-}
-
-// globals used by tailing logic
-let currentLogFetchAbort = null;
-let tailBusy = false;
-const LOG_DOM_CAP = 1000;
-
-  async function getJSON(url, opts = {}) {
-    const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const ct = r.headers.get('content-type') || '';
-    if (ct.includes('application/json')) return await r.json();
-    return JSON.parse(await r.text());
+  function fetchWithTimeout(url, opts = {}) {
+    const timeoutMs = Number(opts.timeoutMs == null ? 8000 : opts.timeoutMs);
+    const ctl = new AbortController();
+    const id = setTimeout(() => ctl.abort(new Error('timeout')), Math.max(1, timeoutMs));
+    const p = fetch(url, { ...opts, signal: opts.signal || ctl.signal });
+    p.finally(() => clearTimeout(id));
+    return p;
   }
 
-  function clientLog(msg) {
-    const el = document.createElement('p');
-    el.className = 'logLine';
-    el.textContent = `[client] ${msg}`;
-    document.getElementById('log-container').appendChild(el);
+  // globals used by tailing logic
+  let currentLogFetchAbort = null;
+  let tailBusy = false;
+  let tailTimer = null;
+  const LOG_DOM_CAP = 1000;
+  // Cache of last fetched lines so filtering is instant and local
+  let __logLines = [];
+
+  function autoScrollIfNeeded(){
+    if (!$('#auto-scroll') || !$('#auto-scroll').checked) return;
+    const c = $('#log-container');
+    c.scrollTop = c.scrollHeight + 1000;
   }
 
-  function getSelectedModifier() {
-    const el = document.querySelector('input[name="modifier"]:checked');
-    return el ? el.value : '';
-  }
+  function clearLogView(){ const el = $('#log-container'); if (el) el.textContent=''; }
 
-  // Insert modifier (# or $) after the command token instead of appending at the end.
-  function buildCommandWithModifier(raw, mod) {
-    raw = String(raw || '').trim();
-    if (!mod) return raw;
-    // Remove trailing same modifier if user typed it at the end previously
-    if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
-    const parts = raw.split(/\s+/);
-    if (!parts.length) return raw;
-    // Ensure only one inline modifier at the end of the command token
-    parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
-    return parts.join(' ');
-  }
-
-async function populateServers() {
-  try {
-    const data = await getJSON('/servers');
-    const sel = document.getElementById('server-select');
-    if (!sel) return; // pane removed -> skip gracefully
-    sel.innerHTML = '';
-    for (const s of (data.servers || [])) {
-      const opt = document.createElement('option');
-      opt.value = s.index;
-      opt.textContent = `${s.name} (${s.host}:${s.port})`;
-      sel.appendChild(opt);
+  function toggleTail(){
+    const btn = $('#tail-toggle');
+    if (tailTimer) {
+      clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail';
+    } else {
+      const base = Math.max(250, Number($('#log-interval')?.value || 2000));
+      tailTimer = setInterval(doLogFetchOnce, base);
+      if (btn) btn.textContent = 'Stop Tail';
     }
-    const prefs = loadPrefs();
-    if (prefs && typeof prefs.serverIndex === 'number') sel.value = String(prefs.serverIndex);
-    sel.addEventListener('change', savePrefs);
-  } catch (e) {
-    // optional: console.warn('populateServers failed', e);
   }
-}
 
-  async function onSendClick() {
-    const input = document.getElementById('command-input');
-    const modifier = getSelectedModifier();
-    const message = buildCommandWithModifier(input.value, modifier);
+  async function doLogFetchOnce(){
+    if (tailBusy) return; tailBusy = true;
+    try {
+      const limit = Number($('#log-limit')?.value || 200);
+      if (currentLogFetchAbort) { try { currentLogFetchAbort.abort(); } catch(_){} }
+      currentLogFetchAbort = new AbortController();
+      const interval = Number($('#log-interval')?.value || 2000);
+      const timeoutMs = Math.max(2000, interval * 2);
 
-    const wait = document.getElementById('wait-response').checked;
-    const quietMs = Number(document.getElementById('quiet-ms').value || 0);
-    const maxMs   = Number(document.getElementById('max-ms').value || 0);
-
-    const body = { command: message };
-    if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
-
-    clientLog(`POST /send: ${JSON.stringify(body)}`);
-    const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) {
+      // Expect server endpoint /logs?limit=..&format=txt (non-breaking vs your backend)
+      const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       const t = await r.text();
-      clientLog(`HTTP ${r.status}: ${t}`);
-      return;
+
+      // Normalize line endings and cache
+      const t2 = t.replace(/
+/g, '
+').replace(//g, '
+');
+      __logLines = t2.split('
+').filter(Boolean);
+
+      // Draw from cache (filter applied locally)
+      renderLogView();
+    } catch (e) {
+      // Also print errors into the view so user sees them
+      const el = $('#log-container');
+      if (el) {
+        const p = document.createElement('p');
+        p.className = 'logLine cat-error';
+        p.textContent = '[client] log fetch failed: ' + (e && e.message ? e.message : e);
+        el.appendChild(p);
+      }
+    } finally {
+      tailBusy = false; currentLogFetchAbort = null;
     }
-    const data = await r.json();
-    clientLog(JSON.stringify(data));
   }
 
-  async function doConnect(){
-    const sel = document.getElementById('server-select');
-    const idx = Number(sel.value || 0);
-    const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
-    clientLog(await r.text());
-    await refreshStatus();
-  }
-  async function doDisconnect(){
-    const r = await fetch('/disconnect', { method:'POST' });
-    clientLog(await r.text());
-    await refreshStatus();
-  }
-
-async function refreshStatus() {
-  try {
-    const data = await getJSON('/status');
-    document.getElementById('conn-status').textContent =
-      data.connected
-        ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
-        : 'Not connected';
-  } catch (e) {
-    document.getElementById('conn-status').textContent = String(e);
-  }
-}
-
-async function doLogFetchOnce() {
-  if (tailBusy) return; tailBusy = true;
-  try {
-    const limit = Number(document.getElementById('log-limit')?.value || 200);
-    if (currentLogFetchAbort) { try { currentLogFetchAbort.abort(); } catch(_){} }
-    currentLogFetchAbort = new AbortController();
-    const interval = Number(document.getElementById('log-interval')?.value || 2000);
-    const timeoutMs = Math.max(2000, interval * 2);
-
-    // If your server returns text (recommended):
-    const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
-    const t = await r.text();
-
-    // If your server returns JSON instead, use this alternative:
-    // const data = await getJSON(`/logs?limit=${limit}`, { timeoutMs });
-    // const t = (Array.isArray(data.lines) ? data.lines : []).join('\n');
-
-    const el = document.getElementById('log-container');
-    if (!el) return;
-
-    el.innerHTML = '';
-    const t2 = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const lines = t2.split('\n');
-    const frag = document.createDocumentFragment();
-    
-    // NEW: read the filter text (case-insensitive)
-	const filt = (document.getElementById('log-filter')?.value || '').toLowerCase();
-	
-	for (const rawLine of lines) {
-	  if (!rawLine) continue;
-	  // NEW: simple substring filter
-	  if (filt && rawLine.toLowerCase().indexOf(filt) === -1) continue;
-	
-	  const { node } = renderLogLinePretty(rawLine);
-	  frag.appendChild(node);
-	}
-    
-    
-    for (const rawLine of lines) {
-      if (!rawLine) continue;
-      const { node } = renderLogLinePretty(rawLine);
-      frag.appendChild(node);
-    }
-    el.appendChild(frag);
-    while (el.childNodes.length > LOG_DOM_CAP) el.removeChild(el.firstChild);
-    autoScrollIfNeeded();
-  } catch (e) {
-    clientLog('log fetch failed: ' + (e && e.message ? e.message : e));
-  } finally {
-    tailBusy = false;
-    currentLogFetchAbort = null;
-  }
-}
-
-  function renderLogLine(line){
-    var node = document.createElement('div');
+  // Pretty printer (kept simple; no regex literals)
+  function renderLogLinePretty(line){
+    const node = document.createElement('div');
     node.className = 'logLine';
 
-    var ts = '';
-    var rest = line;
-    if (line.length > 2 && line.charCodeAt(0) === 91) { // '['
-      var rb = line.indexOf(']');
-      if (rb > 0) {
-        ts = line.slice(1, rb);
-        rest = line.slice(rb + 1).trimStart();
-      }
+    let ts = '';
+    let rest = line;
+    if (line && line.charAt(0) === '[') {
+      const rb = line.indexOf(']');
+      if (rb > 0) { ts = line.substring(1, rb); rest = line.substring(rb + 1); if (rest.charAt(0) === ' ') rest = rest.substring(1); }
     }
 
-    var tsSpan = document.createElement('span');
+    const tsSpan = document.createElement('span');
     tsSpan.className = 'ts';
-    tsSpan.textContent = ts ? '[' + ts + '] ' : '';
+    tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
     node.appendChild(tsSpan);
 
-    var body = document.createElement('span');
+    const body = document.createElement('span');
     body.textContent = rest;
 
-    var low = rest.toLowerCase();
-    var cls = '';
+    const low = rest.toLowerCase();
+    let cls = '';
     if (rest.indexOf('HTTP') === 0) cls = 'http';
     else if (rest.indexOf('CMD') === 0 || rest.indexOf('CMD/API') !== -1) cls = 'cmd';
     else if (rest.indexOf('RX <-') === 0 || rest.indexOf(' RX <-') !== -1) cls = 'rx';
@@ -306,215 +133,48 @@ async function doLogFetchOnce() {
 
     body.className = 'cat-' + (cls || 'plain');
     node.appendChild(body);
-    return { node: node };
+    return { node };
   }
 
-  // Pretty printer that tokenizes common patterns (no regex literals)
-  function renderLogLinePretty(line){
-    var node = document.createElement('div');
-    node.className = 'logLine';
+  // NEW: pure renderer that applies the text filter locally
+  function renderLogView(){
+    const el = $('#log-container');
+    if (!el) return;
+    const filt = ($('#log-filter')?.value || '').toLowerCase();
 
-    // [timestamp] prefix
-    var ts = '';
-    var rest = line;
-    if (line && line.charAt(0) === '[') {
-      var rb = line.indexOf(']');
-      if (rb > 0) { ts = line.substring(1, rb); rest = line.substring(rb + 1); if (rest.charAt(0) === ' ') rest = rest.substring(1); }
+    const frag = document.createDocumentFragment();
+    let count = 0;
+    for (const rawLine of __logLines) {
+      if (!rawLine) continue;
+      if (filt && rawLine.toLowerCase().indexOf(filt) === -1) continue;
+      const { node } = renderLogLinePretty(rawLine);
+      frag.appendChild(node);
+      if (++count >= LOG_DOM_CAP) break;
     }
-
-    var tsSpan = document.createElement('span');
-    tsSpan.className = 'ts';
-    tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
-    node.appendChild(tsSpan);
-
-    function add(cls, text){ var s = document.createElement('span'); s.className = cls; s.textContent = text; node.appendChild(s); return s; }
-
-    var done = false;
-    var low = rest.toLowerCase();
-
-    // HTTP METHOD PATH [from IP] -> payload
-    if (!done && rest.indexOf('HTTP ') === 0) {
-      var afterHttp = rest.substring(5);
-      var sp1 = afterHttp.indexOf(' ');
-      if (sp1 > 0) {
-        var method = afterHttp.substring(0, sp1);
-        var afterMethod = afterHttp.substring(sp1 + 1);
-        var sp2 = afterMethod.indexOf(' ');
-        var path = sp2 > -1 ? afterMethod.substring(0, sp2) : afterMethod;
-        var tail = sp2 > -1 ? afterMethod.substring(sp2 + 1) : '';
-        add('token cat-http', 'HTTP'); node.appendChild(document.createTextNode(' '));
-        add('token', method); node.appendChild(document.createTextNode(' '));
-        add('path', path);
-        var lowTail = tail.toLowerCase();
-        var fromIdx = lowTail.indexOf(' from ');
-        if (fromIdx !== -1) {
-          var afterFrom = tail.substring(fromIdx + 6);
-          var spaceAfterIp = afterFrom.indexOf(' ');
-          var ip = spaceAfterIp === -1 ? afterFrom : afterFrom.substring(0, spaceAfterIp);
-          node.appendChild(document.createTextNode(' ')); add('addr', 'from ' + ip);
-          tail = tail.substring(0, fromIdx) + tail.substring(fromIdx + 6 + ip.length);
-        }
-        var arrowIdx = tail.indexOf('->');
-        if (arrowIdx !== -1) {
-          var payload = tail.substring(arrowIdx + 2).trim();
-          node.appendChild(document.createTextNode(' ')); add('arrow', '→'); node.appendChild(document.createTextNode(' ')); add('code', payload);
-        }
-        done = true;
-      }
-    }
-
-    // CMD or CMD/API -> payload
-    if (!done && (rest.indexOf('CMD ') === 0 || rest.indexOf('CMD/') === 0)) {
-      var arrIdx = rest.indexOf('->');
-      var payload2 = arrIdx !== -1 ? rest.substring(arrIdx + 2).trim() : rest;
-      add('token cat-cmd', 'CMD'); node.appendChild(document.createTextNode(' ')); add('arrow', '→'); node.appendChild(document.createTextNode(' ')); add('code', payload2);
-      done = true;
-    }
-
-    // RX <- payload
-    if (!done && rest.indexOf('RX ') === 0) {
-      var splitIdx = rest.indexOf('<-');
-      if (splitIdx !== -1) {
-        var payload3 = rest.substring(splitIdx + 2).trim();
-        add('token cat-rx', 'RX'); node.appendChild(document.createTextNode(' ')); add('arrow', '←'); node.appendChild(document.createTextNode(' ')); add('code', payload3);
-        done = true;
-      }
-    }
-
-    // PUSH ...
-    if (!done && low.indexOf('push') !== -1) { add('token cat-push', 'PUSH'); node.appendChild(document.createTextNode(' ')); add('code', rest); done = true; }
-
-    // ERROR ...
-    if (!done && low.indexOf('error') !== -1) { add('token cat-error', 'ERROR'); node.appendChild(document.createTextNode(' ')); add('code', rest); done = true; }
-
-    if (!done) { var body = document.createElement('span'); body.textContent = rest; node.appendChild(body); }
-    return { node: node };
+    el.innerHTML = '';
+    el.appendChild(frag);
+    autoScrollIfNeeded();
   }
 
-  let tailTimer = null;
-  function autoScrollIfNeeded(){
-    if (!document.getElementById('auto-scroll').checked) return;
-    const c = document.getElementById('log-container');
-    c.scrollTop = c.scrollHeight + 1000;
-  }
-  
-function toggleTail(){
-  const btn = document.getElementById('tail-toggle');
-  if (tailTimer) {
-    clearInterval(tailTimer);
-    tailTimer = null;
-    btn.textContent = 'Start Tail';
-  } else {
-    const base = Math.max(250, Number(document.getElementById('log-interval')?.value || 2000));
-    tailTimer = setInterval(doLogFetchOnce, base);
-    btn.textContent = 'Stop Tail';
-  }
-}
-
-  function clearLogView(){ document.getElementById('log-container').textContent = ''; }
-
-    async function populateCommands(){
-    try {
-      const data = await getJSON('/commands');
-      const items = data.items || [];
-      window.__items = items;
-      renderCommandsTable();
-    } catch (e) {
-      const tb = document.getElementById('command-tbody');
-      tb.innerHTML = `<tr><td colspan="3">${e.message}</td></tr>`;
-    }
-  }
-
-  function renderCommandsTable(){
-    const filt = (document.getElementById('cmd-filter').value || '').toLowerCase();
-    const items = (window.__items || []).filter(it =>
-      (String(it.command || '').toLowerCase().includes(filt)) ||
-      (String(it.description || '').toLowerCase().includes(filt)) ||
-      (String(it.params || '').toLowerCase().includes(filt))
-    );
-
-    const tb = document.getElementById('command-tbody');
-    tb.innerHTML = '';
-
-    items.forEach(it => {
-		const tr = document.createElement('tr');
-		
-		// command
-		const tdCmd = document.createElement('td');
-		tdCmd.className = 'monospace';
-		tdCmd.dataset.command = it.command || '';
-		tdCmd.textContent = it.command || '';
-		
-		// description
-		const tdDesc = document.createElement('td');
-		tdDesc.textContent = it.description || '';
-		
-		// params (show <placeholders> literally)
-		const tdParams = document.createElement('td');
-		tdParams.className = 'monospace';
-		tdParams.textContent = it.params || '';
-		
-		tr.appendChild(tdCmd);
-		tr.appendChild(tdDesc);
-		tr.appendChild(tdParams);
-		
-		// keep existing click behavior
-		tr.dataset.params = it.params || '';
-		tr.addEventListener('click', () => {
-		  const mod = getSelectedModifier();
-		  const withMod = buildCommandWithModifier(it.command, mod);
-		  const full = it.params ? `${withMod} ${it.params}` : withMod;
-		  const input = document.getElementById('command-input');
-		  input.value = full;
-		  input.focus();
-		});
-		
-		tb.appendChild(tr);
-
-    });
-  }
-
-  async function init(){
-    // restore prefs
-    const prefs = loadPrefs();
-    if (prefs.logLimit != null) document.getElementById('log-limit').value = prefs.logLimit;
-    if (prefs.logInterval != null) document.getElementById('log-interval').value = prefs.logInterval;
-    if (typeof prefs.autoScroll === 'boolean') document.getElementById('auto-scroll').checked = prefs.autoScroll;
-    if (prefs.modifier != null) {
-      const radio = document.querySelector(`input[name="modifier"][value="${prefs.modifier}"]`);
-      if (radio) radio.checked = true;
-    }
-
-    // persist handlers
-    document.getElementById('log-limit').addEventListener('change', savePrefs);
-    document.getElementById('log-interval').addEventListener('change', savePrefs);
-    document.getElementById('auto-scroll').addEventListener('change', savePrefs);
-    document.querySelectorAll('input[name="modifier"]').forEach(el => el.addEventListener('change', savePrefs));
-
-    await populateServers();
-    await refreshStatus();
-    await populateCommands();
-    toggleTail(); // start log tailing by default
-    await doLogFetchOnce(); // fetch immediately once so UI populates
-  }
-
-  window.addEventListener('load', init);
-
-  // Pause tail when tab is hidden; resume when visible again
-  let tailWasRunningBeforeHide = false;
-  document.addEventListener('visibilitychange', () => {
-    const btn = document.getElementById('tail-toggle');
-    if (document.hidden) {
-      tailWasRunningBeforeHide = !!tailTimer;
-      if (tailTimer) { clearInterval(tailTimer); tailTimer = null; btn.textContent = 'Start Tail'; }
-      if (currentLogFetchAbort) { try { currentLogFetchAbort.abort(); } catch(_){} currentLogFetchAbort = null; }
-    } else {
-      if (tailWasRunningBeforeHide) { doLogFetchOnce(); toggleTail(); }
-    }
+  // Initial auto-start tailing
+  window.addEventListener('load', () => {
+    toggleTail();      // start tailing
+    doLogFetchOnce();  // and draw immediately once
   });
 </script>
 
-  
-
 </body>
 </html>
+
+/* io.js */
+'use strict';
+const express = require('express');
+const router = express.Router();
+const ctx = require('../core/context');
+const { logLine, tailFile } = require('../core/logger');
+const { sendToTCP, sendCmdLogged } = require('../core/tcp');
+const { runQueued, sleep } = require('../core/queue');
+
+// Existing JS content from io.js goes here
+
+module.exports = router;
