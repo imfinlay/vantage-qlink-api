@@ -1,15 +1,51 @@
-<!-- index.html -->
+<!-- /index.html -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
+  <!-- Early theme bootstrapping to avoid FOUC -->
+  <script>
+    (function () {
+      try {
+        var KEY = 'ui.theme';
+        var saved = localStorage.getItem(KEY);
+        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TCP Command Console</title>
+  <title>Vantage Qlink Command Console</title>
 </head>
 <body>
-  <h1>TCP Command Console</h1>
-  
+<header class="app-header">
+  <div class="bar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span>Vantage Qlink Command Console</span>
+    </div>
+
+    <div class="row header-right">
+      <div class="theme-switch" title="Toggle dark mode">
+        <span class="small" id="theme-name">Light</span>
+        <label class="switch">
+          <!-- checked = dark -->
+          <input id="theme-toggle" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <span id="hb-status" class="badge">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="conn-label">Not connected</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<main class="app-main">
+
 <div class="row">
   <label>Server:
     <select id="server-select"></select>
@@ -26,14 +62,14 @@
     <button class="btn primary" onclick="onSendClick()">Send</button>
   </div>
 
-  <div style="margin-top: 8px;" class="row">
+  <div class="row">
     <strong>Response Mode:</strong>
     <label><input type="radio" name="modifier" value="" checked /> None</label>
     <label><input type="radio" name="modifier" value="$" /> $ (short, after command)</label>
     <label><input type="radio" name="modifier" value="#" /> # (detailed, after command)</label>
   </div>
 
-  <div class="row" style="margin-top: 8px;">
+  <div class="row">
     <strong>Wait / Collect:</strong>
     <label><input id="wait-response" type="checkbox" /> Wait for response</label>
     <label>quietMs <input id="quiet-ms" type="number" min="0" value="300" /></label>
@@ -43,17 +79,17 @@
 
 <div class="card">
   <h2>Commands</h2>
-  <div style="display:flex; gap:8px; align-items:center;">
-    <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." oninput="renderCommandsTable()" /></label>
+  <div class="row">
+    <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." /></label>
     <span class="small">Click a row to copy into the input.</span>
   </div>
-  <div style="max-height:260px; overflow-y:auto;">
+  <div class="table-scroll">
     <table>
       <thead>
         <tr>
-          <th style="width:200px;">Command</th>
+          <th class="w-200">Command</th>
           <th>Description</th>
-          <th style="width:300px;">Params</th>
+          <th class="w-300">Params</th>
         </tr>
       </thead>
       <tbody id="command-tbody"></tbody>
@@ -61,24 +97,40 @@
   </div>
 </div>
 
-  <div class="card">
-    <h2>Logs Tail</h2>
-    <div class="row" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
-      <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
-      <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
-      <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
-      <!-- NEW: local text filter triggers render only -->
-      <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
-      <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
-      <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
-      <button class="btn" onclick="clearLogView()">Clear View</button>
-    </div>
-    <div id="log-container" class="card" style="margin-top:8px;max-height:360px;overflow-y:auto;"></div>
+<div class="card">
+  <h2>Logs Tail</h2>
+  <div class="row log-toolbar">
+    <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
+    <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
+    <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
+    <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
+    <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
+    <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
+    <button class="btn" onclick="clearLogView()">Clear View</button>
+    <button class="btn" onclick="copyVisibleLog()">Copy Visible</button>
   </div>
+  <div id="log-container" class="card log-scroll" tabindex="-1" aria-label="Logs output (read only)"></div>
+</div>
 
 <script>
-  // ---- helpers & prefs ----
+  // ---------- helpers ----------
   const $ = (sel) => document.querySelector(sel);
+  const THEME_KEY = 'ui.theme';
+
+  function applyTheme(t){
+    document.documentElement.setAttribute('data-theme', t);
+    const isDark = t === 'dark';
+    const nameEl = $('#theme-name');
+    const toggle = $('#theme-toggle');
+    if (toggle) toggle.checked = isDark;
+    if (nameEl) nameEl.textContent = isDark ? 'Dark' : 'Light';
+  }
+  function setTheme(t){ localStorage.setItem(THEME_KEY, t); applyTheme(t); }
+  function initTheme(){
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(current);
+    $('#theme-toggle')?.addEventListener('change', () => setTheme($('#theme-toggle').checked ? 'dark' : 'light'));
+  }
 
   function fetchWithTimeout(url, opts = {}) {
     const timeoutMs = Number(opts.timeoutMs == null ? 8000 : opts.timeoutMs);
@@ -89,33 +141,27 @@
     return p;
   }
 
-  // globals used by tailing logic
+  function debounce(fn, wait = 150) {
+    let t; return function debounced(...args){ clearTimeout(t); t = setTimeout(() => fn.apply(this, args), wait); };
+  }
+
+  // ---------- logs ----------
   let currentLogFetchAbort = null;
   let tailBusy = false;
   let tailTimer = null;
   const LOG_DOM_CAP = 1000;
-  // Cache of last fetched lines so filtering is instant and local
   let __logLines = [];
 
   function autoScrollIfNeeded(){
     if (!$('#auto-scroll') || !$('#auto-scroll').checked) return;
-    const c = $('#log-container');
-    c.scrollTop = c.scrollHeight + 1000;
+    const c = $('#log-container'); c.scrollTop = c.scrollHeight + 1000;
   }
-
   function clearLogView(){ const el = $('#log-container'); if (el) el.textContent=''; }
-
   function toggleTail(){
     const btn = $('#tail-toggle');
-    if (tailTimer) {
-      clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail';
-    } else {
-      const base = Math.max(250, Number($('#log-interval')?.value || 2000));
-      tailTimer = setInterval(doLogFetchOnce, base);
-      if (btn) btn.textContent = 'Stop Tail';
-    }
+    if (tailTimer) { clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail'; }
+    else { const base = Math.max(250, Number($('#log-interval')?.value || 2000)); tailTimer = setInterval(doLogFetchOnce, base); if (btn) btn.textContent = 'Stop Tail'; }
   }
-
   async function doLogFetchOnce(){
     if (tailBusy) return; tailBusy = true;
     try {
@@ -124,21 +170,13 @@
       currentLogFetchAbort = new AbortController();
       const interval = Number($('#log-interval')?.value || 2000);
       const timeoutMs = Math.max(2000, interval * 2);
-
-      // Expect server endpoint /logs?limit=..&format=txt (non-breaking vs your backend)
       const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const t = await r.text();
-
-		// Normalize line endings and cache
-		const t2 = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-		__logLines = t2.split('\n').filter(Boolean);
-		
-		// Draw from cache (filter applied locally)
-		renderLogView();
-
+      const lines = String(t || '').split(/\r?\n/).filter(Boolean);
+      __logLines = lines.slice(-limit);
+      renderLogView();
     } catch (e) {
-      // Also print errors into the view so user sees them
       const el = $('#log-container');
       if (el) {
         const p = document.createElement('p');
@@ -146,52 +184,31 @@
         p.textContent = '[client] log fetch failed: ' + (e && e.message ? e.message : e);
         el.appendChild(p);
       }
-    } finally {
-      tailBusy = false; currentLogFetchAbort = null;
-    }
+    } finally { tailBusy = false; currentLogFetchAbort = null; }
   }
-
-  // Pretty printer (kept simple; no regex literals)
   function renderLogLinePretty(line){
-    const node = document.createElement('div');
-    node.className = 'logLine';
-
-    let ts = '';
-    let rest = line;
+    const node = document.createElement('div'); node.className = 'logLine';
+    let ts = '', rest = line;
     if (line && line.charAt(0) === '[') {
       const rb = line.indexOf(']');
       if (rb > 0) { ts = line.substring(1, rb); rest = line.substring(rb + 1); if (rest.charAt(0) === ' ') rest = rest.substring(1); }
     }
-
-    const tsSpan = document.createElement('span');
-    tsSpan.className = 'ts';
-    tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
-    node.appendChild(tsSpan);
-
-    const body = document.createElement('span');
-    body.textContent = rest;
-
-    const low = rest.toLowerCase();
-    let cls = '';
+    const tsSpan = document.createElement('span'); tsSpan.className = 'ts'; tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
+    const body = document.createElement('span'); body.textContent = rest;
+    const low = rest.toLowerCase(); let cls = '';
     if (rest.indexOf('HTTP') === 0) cls = 'http';
     else if (rest.indexOf('CMD') === 0 || rest.indexOf('CMD/API') !== -1) cls = 'cmd';
     else if (rest.indexOf('RX <-') === 0 || rest.indexOf(' RX <-') !== -1) cls = 'rx';
     else if (low.indexOf('push') !== -1) cls = 'push';
     else if (low.indexOf('error') !== -1) cls = 'error';
-
     body.className = 'cat-' + (cls || 'plain');
-    node.appendChild(body);
+    node.appendChild(tsSpan); node.appendChild(body);
     return { node };
   }
-
-  // NEW: pure renderer that applies the text filter locally
   function renderLogView(){
-    const el = $('#log-container');
-    if (!el) return;
+    const el = $('#log-container'); if (!el) return;
     const filt = ($('#log-filter')?.value || '').toLowerCase();
-
-    const frag = document.createDocumentFragment();
-    let count = 0;
+    const frag = document.createDocumentFragment(); let count = 0;
     for (const rawLine of __logLines) {
       if (!rawLine) continue;
       if (filt && rawLine.toLowerCase().indexOf(filt) === -1) continue;
@@ -199,145 +216,165 @@
       frag.appendChild(node);
       if (++count >= LOG_DOM_CAP) break;
     }
-    el.innerHTML = '';
-    el.appendChild(frag);
+    el.innerHTML = ''; el.appendChild(frag);
     autoScrollIfNeeded();
   }
 
+  // Copy only currently visible (rendered) log lines
+  async function copyVisibleLog(){
+    try {
+      const nodes = Array.from(document.querySelectorAll('#log-container .logLine'));
+      const text = nodes.map(n => n.textContent).join('\n');
+      if (!text) { clientLog('nothing to copy'); return; }
 
-// ---- Server & Command UI helpers ----
-function clientLog(msg) {
-  const el = document.getElementById('log-container');
-  if (!el) return;
-  const p = document.createElement('p');
-  p.className = 'logLine';
-  p.textContent = '[client] ' + msg;
-  el.appendChild(p);
-}
-
-async function getJSON(url, opts) {
-  opts = opts || {};
-  const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const ct = r.headers.get('content-type') || '';
-  if (ct.indexOf('application/json') !== -1) return await r.json();
-  return JSON.parse(await r.text());
-}
-
-function getSelectedModifier(){
-  const el = document.querySelector('input[name="modifier"]:checked');
-  return el ? el.value : '';
-}
-function buildCommandWithModifier(raw, mod){
-  raw = String(raw || '').trim();
-  if (!mod) return raw;
-  if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
-  const parts = raw.split(/\s+/);
-  if (!parts.length) return raw;
-  parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
-  return parts.join(' ');
-}
-
-async function onSendClick(){
-  try {
-    const input = document.getElementById('command-input');
-    const modifier = getSelectedModifier();
-    const message = buildCommandWithModifier(input.value, modifier);
-    const wait = document.getElementById('wait-response') && document.getElementById('wait-response').checked;
-    const quietMs = Number((document.getElementById('quiet-ms') && document.getElementById('quiet-ms').value) || 0);
-    const maxMs   = Number((document.getElementById('max-ms') && document.getElementById('max-ms').value) || 0);
-    const body = { command: message };
-    if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
-    const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    clientLog(await r.text());
-  } catch(e){ clientLog('send failed: ' + (e.message || e)); }
-}
-
-async function doConnect(){
-  try {
-    const sel = document.getElementById('server-select');
-    const idx = Number(sel && sel.value || 0);
-    const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
-    clientLog(await r.text());
-    await refreshStatus();
-  } catch(e){ clientLog('connect failed: ' + (e.message || e)); }
-}
-async function doDisconnect(){
-  try {
-    const r = await fetch('/disconnect', { method:'POST' });
-    clientLog(await r.text());
-    await refreshStatus();
-  } catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
-}
-
-async function refreshStatus(){
-  try {
-    const data = await getJSON('/status');
-    const el = document.getElementById('conn-status');
-    if (el) el.textContent = data.connected ? ('Connected to ' + (data.server ? (data.server.name || data.server.host) : 'server')) : 'Not connected';
-  } catch(e){ const el = document.getElementById('conn-status'); if (el) el.textContent = String(e && e.message ? e.message : e); }
-}
-
-async function populateServers(){
-  try {
-    const data = await getJSON('/servers');
-    const sel = document.getElementById('server-select');
-    if (!sel) return;
-    sel.innerHTML = '';
-    (data.servers || []).forEach(function(s){
-      var opt = document.createElement('option');
-      opt.value = s.index;
-      opt.textContent = (s.name + ' (' + s.host + ':' + s.port + ')');
-      sel.appendChild(opt);
-    });
-  } catch(_){ }
-}
-
-async function populateCommands(){
-  try {
-    const data = await getJSON('/commands');
-    window.__items = data.items || [];
-    renderCommandsTable();
-  } catch(e){
-    var tb = document.getElementById('command-tbody');
-    if (tb) tb.innerHTML = '<tr><td colspan="3">' + (e.message || e) + '</td></tr>';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      clientLog(`copied ${nodes.length} visible line(s)`);
+    } catch (e) {
+      clientLog('copy failed: ' + (e?.message || e));
+    }
   }
-}
-function renderCommandsTable(){
-  const filt = (document.getElementById('cmd-filter') && document.getElementById('cmd-filter').value || '').toLowerCase();
-  const items = (window.__items || []).filter(function(it){
-    return String(it.command || '').toLowerCase().indexOf(filt) !== -1 ||
-           String(it.description || '').toLowerCase().indexOf(filt) !== -1 ||
-           String(it.params || '').toLowerCase().indexOf(filt) !== -1;
-  });
-  const tb = document.getElementById('command-tbody');
-  if (!tb) return;
-  tb.innerHTML = '';
-  items.forEach(function(it){
-    const tr = document.createElement('tr');
-    const tdCmd = document.createElement('td'); tdCmd.className='monospace'; tdCmd.textContent = it.command || '';
-    const tdDesc = document.createElement('td'); tdDesc.textContent = it.description || '';
-    const tdParams = document.createElement('td'); tdParams.className='monospace'; tdParams.textContent = it.params || '';
-    tr.appendChild(tdCmd); tr.appendChild(tdDesc); tr.appendChild(tdParams);
-    tr.addEventListener('click', function(){
-      const mod = getSelectedModifier();
-      const withMod = buildCommandWithModifier(it.command, mod);
-      const full = it.params ? (withMod + ' ' + it.params) : withMod;
+
+  // ---------- server & commands ----------
+  function clientLog(msg) {
+    const el = document.getElementById('log-container'); if (!el) return;
+    const p = document.createElement('p'); p.className = 'logLine'; p.textContent = '[client] ' + msg; el.appendChild(p);
+  }
+  async function getJSON(url, opts) {
+    opts = opts || {};
+    const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const ct = r.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') !== -1) return await r.json();
+    return JSON.parse(await r.text());
+  }
+  function getSelectedModifier(){ const el = document.querySelector('input[name="modifier"]:checked'); return el ? el.value : ''; }
+  function buildCommandWithModifier(raw, mod){
+    raw = String(raw || '').trim(); if (!mod) return raw;
+    if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
+    const parts = raw.split(/\s+/); if (!parts.length) return raw;
+    parts[0] = parts[0].replace(/[#$]+$/, '') + mod; return parts.join(' ');
+  }
+  async function onSendClick(){
+    try {
       const input = document.getElementById('command-input');
-      if (input) { input.value = full; input.focus(); }
+      const modifier = getSelectedModifier();
+      const message = buildCommandWithModifier(input.value, modifier);
+      const wait = document.getElementById('wait-response')?.checked;
+      const quietMs = Number(document.getElementById('quiet-ms')?.value || 0);
+      const maxMs   = Number(document.getElementById('max-ms')?.value || 0);
+      const body = { command: message };
+      if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
+      const r = await fetch('/send', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
+      clientLog(await r.text());
+    } catch(e){ clientLog('send failed: ' + (e.message || e)); }
+  }
+  async function doConnect(){
+    try {
+      const sel = document.getElementById('server-select');
+      const idx = Number(sel && sel.value || 0);
+      const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
+      clientLog(await r.text()); await refreshStatus();
+    } catch(e){ clientLog('connect failed: ' + (e.message || e)); }
+  }
+  async function doDisconnect(){
+    try { const r = await fetch('/disconnect', { method:'POST' }); clientLog(await r.text()); await refreshStatus(); }
+    catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
+  }
+  async function refreshStatus(){
+    try {
+      const data = await getJSON('/status');
+      const el = document.getElementById('conn-status');
+      if (el) el.textContent = data.connected
+        ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
+        : 'Not connected';
+      const hdr = document.querySelector('.app-header'); if (hdr) hdr.classList.toggle('connected', !!data.connected);
+      const label = document.getElementById('conn-label');
+      if (label) {
+        const target = data.server?.name || data.server?.host || 'server';
+        label.textContent = data.connected ? `Connected to ${target}` : 'Not connected';
+      }
+    } catch (e) {
+      const el = document.getElementById('conn-status'); if (el) el.textContent = String(e && e.message ? e.message : e);
+      const hdr = document.querySelector('.app-header'); if (hdr) hdr.classList.remove('connected');
+      const label = document.getElementById('conn-label'); if (label) label.textContent = 'Not connected';
+    }
+  }
+  async function populateServers(){
+    try {
+      const data = await getJSON('/servers');
+      const sel = document.getElementById('server-select'); if (!sel) return;
+      sel.innerHTML = '';
+      (data.servers || []).forEach(function(s){
+        var opt = document.createElement('option');
+        opt.value = s.index;
+        opt.textContent = (s.name + ' (' + s.host + ':' + s.port + ')');
+        sel.appendChild(opt);
+      });
+    } catch(e){ clientLog('servers load failed: ' + (e.message || e)); }
+  }
+  async function populateCommands(){
+    try {
+      const data = await getJSON('/commands');
+      const items = (Array.isArray(data.items) && data.items.length)
+        ? data.items
+        : (Array.isArray(data.commands)
+            ? data.commands.map(c => ({ command: String(c), description: '', params: '' }))
+            : []);
+      window.__items = items;
+      renderCommandsTable();
+      if (!items.length) {
+        const tb = document.getElementById('command-tbody');
+        if (tb) tb.innerHTML = '<tr><td colspan="3"><em>No commands returned.</em></td></tr>';
+      }
+    } catch(e){
+      var tb = document.getElementById('command-tbody');
+      if (tb) tb.innerHTML = '<tr><td colspan="3">Failed to load commands: ' + (e.message || e) + '</td></tr>';
+    }
+  }
+  function renderCommandsTable(){
+    const filt = (document.getElementById('cmd-filter')?.value || '').toLowerCase();
+    const items = (window.__items || []).filter(function(it){
+      return String(it.command || '').toLowerCase().includes(filt) ||
+             String(it.description || '').toLowerCase().includes(filt) ||
+             String(it.params || '').toLowerCase().includes(filt);
     });
-    tb.appendChild(tr);
+    const tb = document.getElementById('command-tbody'); if (!tb) return;
+    tb.innerHTML = '';
+    items.forEach(function(it){
+      const tr = document.createElement('tr');
+      const tdCmd = document.createElement('td'); tdCmd.className = 'monospace'; tdCmd.textContent = it.command || ''; tdCmd.setAttribute('data-label', 'Command');
+      const tdDesc = document.createElement('td'); tdDesc.textContent = it.description || ''; tdDesc.setAttribute('data-label', 'Description');
+      const tdParams = document.createElement('td'); tdParams.className = 'monospace'; tdParams.textContent = it.params || ''; tdParams.setAttribute('data-label', 'Params');
+      tr.appendChild(tdCmd); tr.appendChild(tdDesc); tr.appendChild(tdParams);
+      tr.addEventListener('click', function(){
+        const mod = (document.querySelector('input[name="modifier"]:checked')?.value || '');
+        const baseWithMod = (it.command || '').replace(/[#$]+$/, '') + mod;
+        const val = it.params ? (baseWithMod + ' ' + it.params) : baseWithMod;
+        const input = document.getElementById('command-input'); if (input) { input.value = val; input.focus(); }
+      });
+      tb.appendChild(tr);
+    });
+    if (!items.length) tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
+  }
+
+  window.addEventListener('load', async () => {
+    initTheme();
+    await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
+    const filterEl = document.getElementById('cmd-filter');
+    if (filterEl) filterEl.addEventListener('input', debounce(renderCommandsTable, 150));
+    toggleTail();
+    await doLogFetchOnce();
   });
-}
-
-  // Initial auto-start tailing
-// Replace the current load handler:
-window.addEventListener('load', async () => {
-  try { await populateServers(); await refreshStatus(); await populateCommands(); } catch(e){}
-  toggleTail();
-  await doLogFetchOnce();
-});
 </script>
-
+</main>
 </body>
 </html>
