@@ -1,5 +1,5 @@
-/* /site.css */
 
+<!-- /site.css -->
 /* --------- Base & Reset --------- */
 *,
 *::before,
@@ -13,12 +13,10 @@ html, body {
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* theme property transitions */
   transition: background-color .2s ease, color .2s ease;
 }
 
 /* --------- Theme Variables --------- */
-/* Light is default; dark overrides below */
 :root {
   --bg: #ffffff;
   --fg: #0f1115;
@@ -28,21 +26,16 @@ html, body {
   --accent: #2563eb;
   --accent-contrast: #ffffff;
   --table-header: #f3f4f6;
-
-  /* Inputs: force light in light mode */
   --input-bg: #ffffff;
   --input-fg: #0f1115;
-
   --chip-bg: #e5e7eb;
   --status-ok: #16a34a;
   --status-off: #9ca3af;
   --placeholder: #9aa0a6;
-
   --radius: 12px;
   --shadow-sm: 0 2px 8px rgba(0,0,0,.05);
   --shadow-md: 0 8px 20px rgba(0,0,0,.08);
 }
-
 [data-theme="dark"] {
   --bg: #0f1115;
   --fg: #e7e9ee;
@@ -52,11 +45,8 @@ html, body {
   --accent: #3b82f6;
   --accent-contrast: #0b1020;
   --table-header: #1b2230;
-
-  /* Inputs: force dark in dark mode */
   --input-bg: #0f1115;
   --input-fg: #e7e9ee;
-
   --chip-bg: #2a2f3a;
   --status-ok: #22c55e;
   --status-off: #6b7280;
@@ -64,19 +54,14 @@ html, body {
 }
 
 /* --------- Theme Transition (200ms) --------- */
-/* Tiny scale to avoid layout jump; keeps it subtle. */
 @keyframes themeFadeScale {
   from { opacity: 0; transform: scale(0.995); }
   to   { opacity: 1; transform: scale(1); }
 }
-
-/* Run on initial paint and whenever data-theme changes */
 html[data-theme="light"] body,
 html[data-theme="dark"] body {
   animation: themeFadeScale 200ms ease-out;
 }
-
-/* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
@@ -87,21 +72,9 @@ html[data-theme="dark"] body {
 }
 
 /* --------- Layout --------- */
-.app-main {
-  max-width: 1100px;
-  margin: 1rem auto;
-  padding: 0 1rem;
-}
-
-.row {
-  display: flex;
-  gap: .5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
+.app-main { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+.row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .small { color: var(--muted); font-size: 12px; }
-
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -116,38 +89,18 @@ html[data-theme="dark"] body {
 .app-header {
   background: var(--card);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: sticky; top: 0; z-index: 10;
   transition: background-color .2s ease, border-color .2s ease;
 }
-
-.app-header .bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: .75rem 1rem;
-}
-
+.app-header .bar { display: flex; align-items: center; justify-content: space-between; padding: .75rem 1rem; }
 .brand { display: flex; gap: .5rem; align-items: center; font-weight: 600; }
-
 .badge {
-  display: inline-flex;
-  gap: .5rem;
-  align-items: center;
-  padding: .25rem .5rem;
-  background: var(--chip-bg);
-  border-radius: 999px;
-  font-size: 12px;
+  display: inline-flex; gap: .5rem; align-items: center;
+  padding: .25rem .5rem; background: var(--chip-bg);
+  border-radius: 999px; font-size: 12px;
   transition: background-color .2s ease, color .2s ease, border-color .2s ease;
 }
-
-.status-dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--status-off);
-  display: inline-block;
-  transition: background-color .2s ease;
-}
+.status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--status-off); display: inline-block; transition: background-color .2s ease; }
 .app-header.connected .status-dot { background: var(--status-ok); }
 
 /* --------- Tables --------- */
@@ -155,30 +108,20 @@ table { width: 100%; border-collapse: collapse; }
 thead th {
   background: var(--table-header);
   border-bottom: 1px solid var(--border);
-  text-align: left;
-  padding: 8px;
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  text-align: left; padding: 8px;
+  position: sticky; top: 0; z-index: 1;
   transition: background-color .2s ease, border-color .2s ease;
 }
-tbody td {
-  border-bottom: 1px solid var(--border);
-  padding: 8px;
-  transition: border-color .2s ease, color .2s ease, background-color .2s ease;
-}
+tbody td { border-bottom: 1px solid var(--border); padding: 8px; transition: border-color .2s ease, color .2s ease, background-color .2s ease; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { filter: brightness(0.98); }
-
-/* widths & scroll */
 .w-200 { width: 200px; }
 .w-300 { width: 300px; }
 .table-scroll { max-height: 260px; overflow-y: auto; }
 
 /* --------- Controls --------- */
-/* Force text boxes and inputs to match theme explicitly */
 input, select, textarea, button {
-  background: var(--input-bg) !important;  /* ensure light in light mode */
+  background: var(--input-bg) !important;
   color: var(--input-fg) !important;
   border: 1px solid var(--border) !important;
   border-radius: 8px;
@@ -186,40 +129,24 @@ input, select, textarea, button {
   font: inherit;
   transition: background-color .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .02s ease;
 }
-
 input::placeholder, textarea::placeholder { color: var(--placeholder); transition: color .2s ease; }
-
-input:focus, select:focus, textarea:focus, button:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
+input:focus, select:focus, textarea:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace; }
 
 .btn {
-  cursor: pointer;
-  padding: 8px 12px;
-  border-radius: 10px;
+  cursor: pointer; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--border) !important;
-  background: var(--input-bg) !important;
-  color: var(--input-fg) !important;
+  background: var(--input-bg) !important; color: var(--input-fg) !important;
   box-shadow: var(--shadow-sm);
 }
 .btn:hover { box-shadow: var(--shadow-md); }
 .btn:active { transform: translateY(1px); }
-
-.btn.primary {
-  background: var(--accent) !important;
-  color: var(--accent-contrast) !important;
-  border-color: var(--accent) !important;
-}
+.btn.primary { background: var(--accent) !important; color: var(--accent-contrast) !important; border-color: var(--accent) !important; }
 
 /* --------- Theme Switch --------- */
 .theme-switch { display: flex; align-items: center; gap: .5rem; }
-
 .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
-
 .slider {
   position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
   background: var(--chip-bg); transition: background-color .2s ease, border-color .2s ease;
@@ -235,8 +162,23 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 /* --------- Logs --------- */
 .log-toolbar { gap: .5rem 1rem; }
-
 .log-scroll { margin-top: 8px; max-height: 360px; overflow-y: auto; }
+
+/* Make the log window look like a textbox, not a card */
+#log-container {
+  background: var(--input-bg) !important;
+  color: var(--input-fg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  user-select: text;
+  cursor: text;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
+}
+#log-container:focus { outline: none; }
+
+/* Ensure inner lines don't repaint a background */
+#log-container .logLine { background: transparent !important; }
 
 .logLine {
   font-family: ui-monospace, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -246,7 +188,6 @@ input:checked + .slider:before { transform: translateX(20px); }
   margin: 0;
   transition: color .2s ease, background-color .2s ease;
 }
-
 .logLine .ts { color: var(--muted); margin-right: 4px; }
 .cat-http { color: #0366d6; }
 .cat-cmd { color: #795548; }
@@ -260,5 +201,5 @@ input:checked + .slider:before { transform: translateX(20px); }
 /* --------- Responsive --------- */
 @media (max-width: 720px) {
   .app-main { padding: 0 .75rem; }
-  .badge { display: none; } /* keep header tight on small screens */
+  .badge { display: none; }
 }

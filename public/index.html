@@ -107,8 +107,9 @@
     <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
     <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
     <button class="btn" onclick="clearLogView()">Clear View</button>
+    <button class="btn" onclick="copyVisibleLog()">Copy Visible</button>
   </div>
-  <div id="log-container" class="card log-scroll"></div>
+  <div id="log-container" class="card log-scroll" tabindex="-1" aria-label="Logs output (read only)"></div>
 </div>
 
 <script>
@@ -217,6 +218,29 @@
     }
     el.innerHTML = ''; el.appendChild(frag);
     autoScrollIfNeeded();
+  }
+
+  // Copy only currently visible (rendered) log lines
+  async function copyVisibleLog(){
+    try {
+      const nodes = Array.from(document.querySelectorAll('#log-container .logLine'));
+      const text = nodes.map(n => n.textContent).join('\n');
+      if (!text) { clientLog('nothing to copy'); return; }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      clientLog(`copied ${nodes.length} visible line(s)`);
+    } catch (e) {
+      clientLog('copy failed: ' + (e?.message || e));
+    }
   }
 
   // ---------- server & commands ----------
