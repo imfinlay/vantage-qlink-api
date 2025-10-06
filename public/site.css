@@ -181,3 +181,105 @@ tbody tr:hover { background: rgba(108,111,247,.08); }
 }
 .connected .status-dot { background: var(--accent); }
 
+
+<!-- /site.css (append at end; no inline styles needed) -->
+/* === Theme & UI additions === */
+:root {
+  --bg: #ffffff;
+  --fg: #0f1115;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --card: #fafafa;
+  --accent: #2563eb;
+  --accent-contrast: #ffffff;
+  --table-header: #f3f4f6;
+  --input-bg: #ffffff;     /* light inputs */
+  --input-fg: #0f1115;
+  --chip-bg: #e5e7eb;
+  --status-ok: #16a34a;
+  --status-off: #9ca3af;
+  --placeholder: #9aa0a6;
+}
+[data-theme="dark"] {
+  --bg: #0f1115;
+  --fg: #e7e9ee;
+  --muted: #9aa0a6;
+  --border: #23262e;
+  --card: #151922;
+  --accent: #3b82f6;
+  --accent-contrast: #0b1020;
+  --table-header: #1b2230;
+  --input-bg: #0f1115;     /* dark inputs */
+  --input-fg: #e7e9ee;
+  --chip-bg: #2a2f3a;
+  --status-ok: #22c55e;
+  --status-off: #6b7280;
+  --placeholder: #6b7280;
+}
+
+/* Base theme bindings */
+html, body { background: var(--bg); color: var(--fg); }
+.app-main { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+
+/* Header */
+.app-header { background: var(--card); border-bottom: 1px solid var(--border); }
+.app-header .bar { display:flex; align-items:center; justify-content:space-between; padding: .75rem 1rem; }
+.brand { display:flex; gap:.5rem; align-items:center; font-weight:600; }
+.header-right { gap: 1rem; }
+.badge { display:inline-flex; gap:.5rem; align-items:center; padding: .25rem .5rem; background: var(--chip-bg); border-radius: 999px; font-size: 12px; }
+.status-dot { width:10px; height:10px; border-radius:50%; background: var(--status-off); display:inline-block; }
+.app-header.connected .status-dot { background: var(--status-ok); }
+
+/* Layout helpers */
+.row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.small { color: var(--muted); font-size: 12px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 12px 0; }
+
+/* Tables */
+table { width:100%; border-collapse: collapse; }
+thead th { background: var(--table-header); border-bottom: 1px solid var(--border); text-align:left; padding: 8px; }
+tbody td { border-bottom: 1px solid var(--border); padding: 8px; }
+.w-200 { width: 200px; }
+.w-300 { width: 300px; }
+.table-scroll { max-height: 260px; overflow-y: auto; }
+
+/* Controls: force light in light mode, dark in dark mode */
+input, select, textarea, button {
+  background: var(--input-bg) !important;
+  color: var(--input-fg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+input::placeholder, textarea::placeholder { color: var(--placeholder); }
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.btn { cursor: pointer; }
+.btn.primary { background: var(--accent) !important; color: var(--accent-contrast) !important; border-color: var(--accent) !important; }
+
+/* Theme switch */
+.theme-switch { display:flex; align-items:center; gap:.5rem; }
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.switch input { opacity:0; width:0; height:0; }
+.slider {
+  position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+  background: var(--chip-bg); transition: .2s; border-radius: 999px; border: 1px solid var(--border);
+}
+.slider:before {
+  position:absolute; content:""; height:18px; width:18px; left:3px; top:2px;
+  background: var(--bg); transition: .2s; border-radius:50%; border:1px solid var(--border);
+}
+input:checked + .slider { background: var(--accent); }
+input:checked + .slider:before { transform: translateX(20px); }
+
+/* Logs */
+.log-toolbar { gap:.5rem 1rem; }
+.log-scroll { margin-top: 8px; max-height: 360px; overflow-y: auto; }
+.logLine { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; padding: 2px 4px; }
+.logLine .ts { color: var(--muted); }
+.logLine .cat-error { color: #ef4444; }
+
+

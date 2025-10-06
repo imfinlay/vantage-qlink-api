@@ -2,87 +2,21 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
+  <!-- Early theme bootstrapping to avoid FOUC -->
+  <script>
+    (function () {
+      try {
+        var KEY = 'ui.theme';
+        var saved = localStorage.getItem(KEY);
+        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vantage Qlink Command Console</title>
-
-  <!-- Theme overrides (placed after site.css to win specificity) -->
-  <style>
-    :root {
-      --bg: #ffffff;
-      --fg: #0f1115;
-      --muted: #6b7280;
-      --border: #e5e7eb;
-      --card: #fafafa;
-      --accent: #2563eb;
-      --accent-contrast: #ffffff;
-      --table-header: #f3f4f6;
-      --input-bg: #ffffff;
-      --input-fg: #0f1115;
-      --chip-bg: #e5e7eb;
-      --status-ok: #16a34a;
-      --status-off: #9ca3af;
-    }
-    [data-theme="dark"] {
-      --bg: #0f1115;
-      --fg: #e7e9ee;
-      --muted: #9aa0a6;
-      --border: #23262e;
-      --card: #151922;
-      --accent: #3b82f6;
-      --accent-contrast: #0b1020;
-      --table-header: #1b2230;
-      --input-bg: #0f1115;
-      --input-fg: #e7e9ee;
-      --chip-bg: #2a2f3a;
-      --status-ok: #22c55e;
-      --status-off: #6b7280;
-    }
-
-    /* Minimal theming scaffolding */
-    html, body { background: var(--bg); color: var(--fg); }
-    .app-header { background: var(--card); border-bottom: 1px solid var(--border); }
-    .app-header .bar { display:flex; align-items:center; justify-content:space-between; padding: .75rem 1rem; }
-    .brand { display:flex; gap:.5rem; align-items:center; font-weight:600; }
-    .badge { display:inline-flex; gap:.5rem; align-items:center; padding: .25rem .5rem; background: var(--chip-bg); border-radius: 999px; font-size: 12px; }
-    .status-dot { width:10px; height:10px; border-radius:50%; background: var(--status-off); display:inline-block; }
-    .app-header.connected .status-dot { background: var(--status-ok); }
-
-    .app-main { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
-    .row { display:flex; gap:.5rem; align-items:center; }
-    .small { color: var(--muted); font-size: 12px; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 12px 0; }
-    table { width:100%; border-collapse: collapse; }
-    thead th { background: var(--table-header); border-bottom: 1px solid var(--border); text-align:left; padding: 8px; }
-    tbody td { border-bottom: 1px solid var(--border); padding: 8px; }
-    input, select, button { background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
-    input.monospace, td.monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .btn { cursor: pointer; }
-    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
-
-    /* Toggle switch */
-    .theme-switch { display:flex; align-items:center; gap:.5rem; }
-    .switch {
-      position: relative; display: inline-block; width: 44px; height: 24px;
-    }
-    .switch input { opacity:0; width:0; height:0; }
-    .slider {
-      position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
-      background: var(--chip-bg); transition: .2s; border-radius: 999px; border: 1px solid var(--border);
-    }
-    .slider:before {
-      position:absolute; content:""; height:18px; width:18px; left:3px; top:2px;
-      background: var(--bg); transition: .2s; border-radius:50%; border:1px solid var(--border);
-    }
-    input:checked + .slider { background: var(--accent); }
-    input:checked + .slider:before { transform: translateX(20px); }
-
-    /* Log styles minimal */
-    .logLine { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; padding: 2px 4px; }
-    .logLine .ts { color: var(--muted); }
-    .logLine .cat-error { color: #ef4444; }
-  </style>
 </head>
 <body>
 <header class="app-header">
@@ -92,7 +26,7 @@
       <span>Vantage Qlink Command Console</span>
     </div>
 
-    <div class="row" style="gap:1rem;">
+    <div class="row header-right">
       <div class="theme-switch" title="Toggle dark mode">
         <span class="small" id="theme-name">Light</span>
         <label class="switch">
@@ -128,14 +62,14 @@
     <button class="btn primary" onclick="onSendClick()">Send</button>
   </div>
 
-  <div style="margin-top: 8px;" class="row">
+  <div class="row">
     <strong>Response Mode:</strong>
     <label><input type="radio" name="modifier" value="" checked /> None</label>
     <label><input type="radio" name="modifier" value="$" /> $ (short, after command)</label>
     <label><input type="radio" name="modifier" value="#" /> # (detailed, after command)</label>
   </div>
 
-  <div class="row" style="margin-top: 8px;">
+  <div class="row">
     <strong>Wait / Collect:</strong>
     <label><input id="wait-response" type="checkbox" /> Wait for response</label>
     <label>quietMs <input id="quiet-ms" type="number" min="0" value="300" /></label>
@@ -145,17 +79,17 @@
 
 <div class="card">
   <h2>Commands</h2>
-  <div style="display:flex; gap:8px; align-items:center;">
+  <div class="row">
     <label>Filter: <input id="cmd-filter" type="text" placeholder="Search..." /></label>
     <span class="small">Click a row to copy into the input.</span>
   </div>
-  <div style="max-height:260px; overflow-y:auto;">
+  <div class="table-scroll">
     <table>
       <thead>
         <tr>
-          <th style="width:200px;">Command</th>
+          <th class="w-200">Command</th>
           <th>Description</th>
-          <th style="width:300px;">Params</th>
+          <th class="w-300">Params</th>
         </tr>
       </thead>
       <tbody id="command-tbody"></tbody>
@@ -165,7 +99,7 @@
 
 <div class="card">
   <h2>Logs Tail</h2>
-  <div class="row log-toolbar" style="flex-wrap:wrap;gap:.5rem 1rem;align-items:center;">
+  <div class="row log-toolbar">
     <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
     <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
     <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
@@ -174,14 +108,14 @@
     <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
     <button class="btn" onclick="clearLogView()">Clear View</button>
   </div>
-  <div id="log-container" class="card" style="margin-top:8px;max-height:360px;overflow-y:auto;"></div>
+  <div id="log-container" class="card log-scroll"></div>
 </div>
 
 <script>
+  // ---------- helpers ----------
   const $ = (sel) => document.querySelector(sel);
   const THEME_KEY = 'ui.theme';
 
-  // Theme handling (persisted). Checkbox reflects dark=true.
   function applyTheme(t){
     document.documentElement.setAttribute('data-theme', t);
     const isDark = t === 'dark';
@@ -190,21 +124,11 @@
     if (toggle) toggle.checked = isDark;
     if (nameEl) nameEl.textContent = isDark ? 'Dark' : 'Light';
   }
-
-  function setTheme(t){
-    localStorage.setItem(THEME_KEY, t);
-    applyTheme(t);
-  }
-
+  function setTheme(t){ localStorage.setItem(THEME_KEY, t); applyTheme(t); }
   function initTheme(){
-    const saved = localStorage.getItem(THEME_KEY);
-    applyTheme(saved || 'light'); // default light
-    const toggle = $('#theme-toggle');
-    if (toggle) {
-      toggle.addEventListener('change', () => {
-        setTheme(toggle.checked ? 'dark' : 'light');
-      });
-    }
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(current);
+    $('#theme-toggle')?.addEventListener('change', () => setTheme($('#theme-toggle').checked ? 'dark' : 'light'));
   }
 
   function fetchWithTimeout(url, opts = {}) {
@@ -216,16 +140,11 @@
     return p;
   }
 
-  // debounce: reduces re-render churn on large lists
   function debounce(fn, wait = 150) {
-    let t;
-    return function debounced(...args) {
-      clearTimeout(t);
-      t = setTimeout(() => fn.apply(this, args), wait);
-    };
+    let t; return function debounced(...args){ clearTimeout(t); t = setTimeout(() => fn.apply(this, args), wait); };
   }
 
-  // ---- logs ----
+  // ---------- logs ----------
   let currentLogFetchAbort = null;
   let tailBusy = false;
   let tailTimer = null;
@@ -234,23 +153,14 @@
 
   function autoScrollIfNeeded(){
     if (!$('#auto-scroll') || !$('#auto-scroll').checked) return;
-    const c = $('#log-container');
-    c.scrollTop = c.scrollHeight + 1000;
+    const c = $('#log-container'); c.scrollTop = c.scrollHeight + 1000;
   }
-
   function clearLogView(){ const el = $('#log-container'); if (el) el.textContent=''; }
-
   function toggleTail(){
     const btn = $('#tail-toggle');
-    if (tailTimer) {
-      clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail';
-    } else {
-      const base = Math.max(250, Number($('#log-interval')?.value || 2000));
-      tailTimer = setInterval(doLogFetchOnce, base);
-      if (btn) btn.textContent = 'Stop Tail';
-    }
+    if (tailTimer) { clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail'; }
+    else { const base = Math.max(250, Number($('#log-interval')?.value || 2000)); tailTimer = setInterval(doLogFetchOnce, base); if (btn) btn.textContent = 'Stop Tail'; }
   }
-
   async function doLogFetchOnce(){
     if (tailBusy) return; tailBusy = true;
     try {
@@ -259,15 +169,12 @@
       currentLogFetchAbort = new AbortController();
       const interval = Number($('#log-interval')?.value || 2000);
       const timeoutMs = Math.max(2000, interval * 2);
-
       const r = await fetchWithTimeout(`/logs?limit=${limit}&format=txt`, { signal: currentLogFetchAbort.signal, timeoutMs });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const t = await r.text();
-
       const lines = String(t || '').split(/\r?\n/).filter(Boolean);
       __logLines = lines.slice(-limit);
       renderLogView();
-
     } catch (e) {
       const el = $('#log-container');
       if (el) {
@@ -276,50 +183,31 @@
         p.textContent = '[client] log fetch failed: ' + (e && e.message ? e.message : e);
         el.appendChild(p);
       }
-    } finally {
-      tailBusy = false; currentLogFetchAbort = null;
-    }
+    } finally { tailBusy = false; currentLogFetchAbort = null; }
   }
-
   function renderLogLinePretty(line){
-    const node = document.createElement('div');
-    node.className = 'logLine';
-
-    let ts = '';
-    let rest = line;
+    const node = document.createElement('div'); node.className = 'logLine';
+    let ts = '', rest = line;
     if (line && line.charAt(0) === '[') {
       const rb = line.indexOf(']');
       if (rb > 0) { ts = line.substring(1, rb); rest = line.substring(rb + 1); if (rest.charAt(0) === ' ') rest = rest.substring(1); }
     }
-
-    const tsSpan = document.createElement('span');
-    tsSpan.className = 'ts';
-    tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
-    node.appendChild(tsSpan);
-
-    const body = document.createElement('span');
-    body.textContent = rest;
-
-    const low = rest.toLowerCase();
-    let cls = '';
+    const tsSpan = document.createElement('span'); tsSpan.className = 'ts'; tsSpan.textContent = ts ? ('[' + ts + '] ') : '';
+    const body = document.createElement('span'); body.textContent = rest;
+    const low = rest.toLowerCase(); let cls = '';
     if (rest.indexOf('HTTP') === 0) cls = 'http';
     else if (rest.indexOf('CMD') === 0 || rest.indexOf('CMD/API') !== -1) cls = 'cmd';
     else if (rest.indexOf('RX <-') === 0 || rest.indexOf(' RX <-') !== -1) cls = 'rx';
     else if (low.indexOf('push') !== -1) cls = 'push';
     else if (low.indexOf('error') !== -1) cls = 'error';
-
     body.className = 'cat-' + (cls || 'plain');
-    node.appendChild(body);
+    node.appendChild(tsSpan); node.appendChild(body);
     return { node };
   }
-
   function renderLogView(){
-    const el = $('#log-container');
-    if (!el) return;
+    const el = $('#log-container'); if (!el) return;
     const filt = ($('#log-filter')?.value || '').toLowerCase();
-
-    const frag = document.createDocumentFragment();
-    let count = 0;
+    const frag = document.createDocumentFragment(); let count = 0;
     for (const rawLine of __logLines) {
       if (!rawLine) continue;
       if (filt && rawLine.toLowerCase().indexOf(filt) === -1) continue;
@@ -327,21 +215,15 @@
       frag.appendChild(node);
       if (++count >= LOG_DOM_CAP) break;
     }
-    el.innerHTML = '';
-    el.appendChild(frag);
+    el.innerHTML = ''; el.appendChild(frag);
     autoScrollIfNeeded();
   }
 
-  // ---- Server & Commands ----
+  // ---------- server & commands ----------
   function clientLog(msg) {
-    const el = document.getElementById('log-container');
-    if (!el) return;
-    const p = document.createElement('p');
-    p.className = 'logLine';
-    p.textContent = '[client] ' + msg;
-    el.appendChild(p);
+    const el = document.getElementById('log-container'); if (!el) return;
+    const p = document.createElement('p'); p.className = 'logLine'; p.textContent = '[client] ' + msg; el.appendChild(p);
   }
-
   async function getJSON(url, opts) {
     opts = opts || {};
     const r = await fetchWithTimeout(url, { timeoutMs: opts.timeoutMs || 8000 });
@@ -350,53 +232,39 @@
     if (ct.indexOf('application/json') !== -1) return await r.json();
     return JSON.parse(await r.text());
   }
-
-  function getSelectedModifier(){
-    const el = document.querySelector('input[name="modifier"]:checked');
-    return el ? el.value : '';
-  }
+  function getSelectedModifier(){ const el = document.querySelector('input[name="modifier"]:checked'); return el ? el.value : ''; }
   function buildCommandWithModifier(raw, mod){
-    raw = String(raw || '').trim();
-    if (!mod) return raw;
+    raw = String(raw || '').trim(); if (!mod) return raw;
     if (raw.endsWith(mod)) raw = raw.slice(0, -mod.length).trim();
-    const parts = raw.split(/\s+/);
-    if (!parts.length) return raw;
-    parts[0] = parts[0].replace(/[#$]+$/, '') + mod;
-    return parts.join(' ');
+    const parts = raw.split(/\s+/); if (!parts.length) return raw;
+    parts[0] = parts[0].replace(/[#$]+$/, '') + mod; return parts.join(' ');
   }
-
   async function onSendClick(){
     try {
       const input = document.getElementById('command-input');
       const modifier = getSelectedModifier();
       const message = buildCommandWithModifier(input.value, modifier);
-      const wait = document.getElementById('wait-response') && document.getElementById('wait-response').checked;
-      const quietMs = Number((document.getElementById('quiet-ms') && document.getElementById('quiet-ms').value) || 0);
-      const maxMs   = Number((document.getElementById('max-ms') && document.getElementById('max-ms').value) || 0);
+      const wait = document.getElementById('wait-response')?.checked;
+      const quietMs = Number(document.getElementById('quiet-ms')?.value || 0);
+      const maxMs   = Number(document.getElementById('max-ms')?.value || 0);
       const body = { command: message };
       if (wait) { body.quietMs = quietMs; body.maxMs = maxMs; }
-      const r = await fetch('/send', { method:'POST', headers:{ 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch('/send', { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify(body) });
       clientLog(await r.text());
     } catch(e){ clientLog('send failed: ' + (e.message || e)); }
   }
-
   async function doConnect(){
     try {
       const sel = document.getElementById('server-select');
       const idx = Number(sel && sel.value || 0);
       const r = await fetch('/connect', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ serverIndex: idx }) });
-      clientLog(await r.text());
-      await refreshStatus();
+      clientLog(await r.text()); await refreshStatus();
     } catch(e){ clientLog('connect failed: ' + (e.message || e)); }
   }
   async function doDisconnect(){
-    try {
-      const r = await fetch('/disconnect', { method:'POST' });
-      clientLog(await r.text());
-      await refreshStatus();
-    } catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
+    try { const r = await fetch('/disconnect', { method:'POST' }); clientLog(await r.text()); await refreshStatus(); }
+    catch(e){ clientLog('disconnect failed: ' + (e.message || e)); }
   }
-
   async function refreshStatus(){
     try {
       const data = await getJSON('/status');
@@ -404,30 +272,22 @@
       if (el) el.textContent = data.connected
         ? `Connected to ${data.server ? (data.server.name || data.server.host) : 'server'}`
         : 'Not connected';
-
-      const hdr = document.querySelector('.app-header');
-      if (hdr) hdr.classList.toggle('connected', !!data.connected);
-
+      const hdr = document.querySelector('.app-header'); if (hdr) hdr.classList.toggle('connected', !!data.connected);
       const label = document.getElementById('conn-label');
       if (label) {
         const target = data.server?.name || data.server?.host || 'server';
         label.textContent = data.connected ? `Connected to ${target}` : 'Not connected';
       }
     } catch (e) {
-      const el = document.getElementById('conn-status');
-      if (el) el.textContent = String(e && e.message ? e.message : e);
-      const hdr = document.querySelector('.app-header');
-      if (hdr) hdr.classList.remove('connected');
-      const label = document.getElementById('conn-label');
-      if (label) label.textContent = 'Not connected';
+      const el = document.getElementById('conn-status'); if (el) el.textContent = String(e && e.message ? e.message : e);
+      const hdr = document.querySelector('.app-header'); if (hdr) hdr.classList.remove('connected');
+      const label = document.getElementById('conn-label'); if (label) label.textContent = 'Not connected';
     }
   }
-
   async function populateServers(){
     try {
       const data = await getJSON('/servers');
-      const sel = document.getElementById('server-select');
-      if (!sel) return;
+      const sel = document.getElementById('server-select'); if (!sel) return;
       sel.innerHTML = '';
       (data.servers || []).forEach(function(s){
         var opt = document.createElement('option');
@@ -435,11 +295,8 @@
         opt.textContent = (s.name + ' (' + s.host + ':' + s.port + ')');
         sel.appendChild(opt);
       });
-    } catch(e){
-      clientLog('servers load failed: ' + (e.message || e));
-    }
+    } catch(e){ clientLog('servers load failed: ' + (e.message || e)); }
   }
-
   async function populateCommands(){
     try {
       const data = await getJSON('/commands');
@@ -459,64 +316,37 @@
       if (tb) tb.innerHTML = '<tr><td colspan="3">Failed to load commands: ' + (e.message || e) + '</td></tr>';
     }
   }
-
   function renderCommandsTable(){
-    const filt = (document.getElementById('cmd-filter') && document.getElementById('cmd-filter').value || '').toLowerCase();
+    const filt = (document.getElementById('cmd-filter')?.value || '').toLowerCase();
     const items = (window.__items || []).filter(function(it){
       return String(it.command || '').toLowerCase().includes(filt) ||
              String(it.description || '').toLowerCase().includes(filt) ||
              String(it.params || '').toLowerCase().includes(filt);
     });
-
-    const tb = document.getElementById('command-tbody');
-    if (!tb) return;
+    const tb = document.getElementById('command-tbody'); if (!tb) return;
     tb.innerHTML = '';
-
     items.forEach(function(it){
       const tr = document.createElement('tr');
-
-      const tdCmd = document.createElement('td');
-      tdCmd.className = 'monospace';
-      tdCmd.textContent = it.command || '';
-      tdCmd.setAttribute('data-label', 'Command');
-
-      const tdDesc = document.createElement('td');
-      tdDesc.textContent = it.description || '';
-      tdDesc.setAttribute('data-label', 'Description');
-
-      const tdParams = document.createElement('td');
-      tdParams.className = 'monospace';
-      tdParams.textContent = it.params || '';
-      tdParams.setAttribute('data-label', 'Params');
-
-      tr.appendChild(tdCmd);
-      tr.appendChild(tdDesc);
-      tr.appendChild(tdParams);
-
+      const tdCmd = document.createElement('td'); tdCmd.className = 'monospace'; tdCmd.textContent = it.command || ''; tdCmd.setAttribute('data-label', 'Command');
+      const tdDesc = document.createElement('td'); tdDesc.textContent = it.description || ''; tdDesc.setAttribute('data-label', 'Description');
+      const tdParams = document.createElement('td'); tdParams.className = 'monospace'; tdParams.textContent = it.params || ''; tdParams.setAttribute('data-label', 'Params');
+      tr.appendChild(tdCmd); tr.appendChild(tdDesc); tr.appendChild(tdParams);
       tr.addEventListener('click', function(){
-        const mod = getSelectedModifier();
-        const withMod = buildCommandWithModifier(it.command, mod);
-        const full = it.params ? (withMod + ' ' + it.params) : withMod;
-        const input = document.getElementById('command-input');
-        if (input) { input.value = full; input.focus(); }
+        const mod = (document.querySelector('input[name="modifier"]:checked')?.value || '');
+        const baseWithMod = (it.command || '').replace(/[#$]+$/, '') + mod;
+        const val = it.params ? (baseWithMod + ' ' + it.params) : baseWithMod;
+        const input = document.getElementById('command-input'); if (input) { input.value = val; input.focus(); }
       });
-
       tb.appendChild(tr);
     });
-
-    if (!items.length) {
-      tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
-    }
+    if (!items.length) tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
   }
 
   window.addEventListener('load', async () => {
-    initTheme(); // ensure theme is applied before rendering
-
+    initTheme();
     await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
-
     const filterEl = document.getElementById('cmd-filter');
     if (filterEl) filterEl.addEventListener('input', debounce(renderCommandsTable, 150));
-
     toggleTail();
     await doLogFetchOnce();
   });
