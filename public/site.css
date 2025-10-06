@@ -13,6 +13,8 @@ html, body {
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* theme property transitions */
+  transition: background-color .2s ease, color .2s ease;
 }
 
 /* --------- Theme Variables --------- */
@@ -61,6 +63,29 @@ html, body {
   --placeholder: #6b7280;
 }
 
+/* --------- Theme Transition (200ms) --------- */
+/* Tiny scale to avoid layout jump; keeps it subtle. */
+@keyframes themeFadeScale {
+  from { opacity: 0; transform: scale(0.995); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Run on initial paint and whenever data-theme changes */
+html[data-theme="light"] body,
+html[data-theme="dark"] body {
+  animation: themeFadeScale 200ms ease-out;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* --------- Layout --------- */
 .app-main {
   max-width: 1100px;
@@ -84,6 +109,7 @@ html, body {
   padding: 12px;
   margin: 12px 0;
   box-shadow: var(--shadow-sm);
+  transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease;
 }
 
 /* --------- Header --------- */
@@ -93,6 +119,7 @@ html, body {
   position: sticky;
   top: 0;
   z-index: 10;
+  transition: background-color .2s ease, border-color .2s ease;
 }
 
 .app-header .bar {
@@ -112,12 +139,14 @@ html, body {
   background: var(--chip-bg);
   border-radius: 999px;
   font-size: 12px;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
 }
 
 .status-dot {
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--status-off);
   display: inline-block;
+  transition: background-color .2s ease;
 }
 .app-header.connected .status-dot { background: var(--status-ok); }
 
@@ -131,14 +160,17 @@ thead th {
   position: sticky;
   top: 0;
   z-index: 1;
+  transition: background-color .2s ease, border-color .2s ease;
 }
 tbody td {
   border-bottom: 1px solid var(--border);
   padding: 8px;
+  transition: border-color .2s ease, color .2s ease, background-color .2s ease;
 }
 tbody tr { cursor: pointer; }
 tbody tr:hover { filter: brightness(0.98); }
 
+/* widths & scroll */
 .w-200 { width: 200px; }
 .w-300 { width: 300px; }
 .table-scroll { max-height: 260px; overflow-y: auto; }
@@ -152,9 +184,10 @@ input, select, textarea, button {
   border-radius: 8px;
   padding: 6px 8px;
   font: inherit;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .02s ease;
 }
 
-input::placeholder, textarea::placeholder { color: var(--placeholder); }
+input::placeholder, textarea::placeholder { color: var(--placeholder); transition: color .2s ease; }
 
 input:focus, select:focus, textarea:focus, button:focus {
   outline: 2px solid var(--accent);
@@ -170,7 +203,6 @@ input:focus, select:focus, textarea:focus, button:focus {
   border: 1px solid var(--border) !important;
   background: var(--input-bg) !important;
   color: var(--input-fg) !important;
-  transition: background .2s ease, box-shadow .2s ease, transform .02s ease;
   box-shadow: var(--shadow-sm);
 }
 .btn:hover { box-shadow: var(--shadow-md); }
@@ -190,12 +222,12 @@ input:focus, select:focus, textarea:focus, button:focus {
 
 .slider {
   position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--chip-bg); transition: .2s;
+  background: var(--chip-bg); transition: background-color .2s ease, border-color .2s ease;
   border-radius: 999px; border: 1px solid var(--border);
 }
 .slider:before {
   position: absolute; content: ""; height: 18px; width: 18px; left: 3px; top: 2px;
-  background: var(--bg); transition: .2s;
+  background: var(--bg); transition: transform .2s ease, background-color .2s ease, border-color .2s ease;
   border-radius: 50%; border: 1px solid var(--border);
 }
 input:checked + .slider { background: var(--accent); }
@@ -212,6 +244,7 @@ input:checked + .slider:before { transform: translateX(20px); }
   padding: 2px 4px;
   white-space: pre-wrap;
   margin: 0;
+  transition: color .2s ease, background-color .2s ease;
 }
 
 .logLine .ts { color: var(--muted); margin-right: 4px; }
