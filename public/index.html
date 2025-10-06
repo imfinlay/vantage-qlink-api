@@ -1,11 +1,88 @@
 <!-- /index.html -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <link rel="stylesheet" href="/site.css">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vantage Qlink Command Console</title>
+
+  <!-- Theme overrides (placed after site.css to win specificity) -->
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #0f1115;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --card: #fafafa;
+      --accent: #2563eb;
+      --accent-contrast: #ffffff;
+      --table-header: #f3f4f6;
+      --input-bg: #ffffff;
+      --input-fg: #0f1115;
+      --chip-bg: #e5e7eb;
+      --status-ok: #16a34a;
+      --status-off: #9ca3af;
+    }
+    [data-theme="dark"] {
+      --bg: #0f1115;
+      --fg: #e7e9ee;
+      --muted: #9aa0a6;
+      --border: #23262e;
+      --card: #151922;
+      --accent: #3b82f6;
+      --accent-contrast: #0b1020;
+      --table-header: #1b2230;
+      --input-bg: #0f1115;
+      --input-fg: #e7e9ee;
+      --chip-bg: #2a2f3a;
+      --status-ok: #22c55e;
+      --status-off: #6b7280;
+    }
+
+    /* Minimal theming scaffolding */
+    html, body { background: var(--bg); color: var(--fg); }
+    .app-header { background: var(--card); border-bottom: 1px solid var(--border); }
+    .app-header .bar { display:flex; align-items:center; justify-content:space-between; padding: .75rem 1rem; }
+    .brand { display:flex; gap:.5rem; align-items:center; font-weight:600; }
+    .badge { display:inline-flex; gap:.5rem; align-items:center; padding: .25rem .5rem; background: var(--chip-bg); border-radius: 999px; font-size: 12px; }
+    .status-dot { width:10px; height:10px; border-radius:50%; background: var(--status-off); display:inline-block; }
+    .app-header.connected .status-dot { background: var(--status-ok); }
+
+    .app-main { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+    .row { display:flex; gap:.5rem; align-items:center; }
+    .small { color: var(--muted); font-size: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 12px 0; }
+    table { width:100%; border-collapse: collapse; }
+    thead th { background: var(--table-header); border-bottom: 1px solid var(--border); text-align:left; padding: 8px; }
+    tbody td { border-bottom: 1px solid var(--border); padding: 8px; }
+    input, select, button { background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+    input.monospace, td.monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .btn { cursor: pointer; }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+
+    /* Toggle switch */
+    .theme-switch { display:flex; align-items:center; gap:.5rem; }
+    .switch {
+      position: relative; display: inline-block; width: 44px; height: 24px;
+    }
+    .switch input { opacity:0; width:0; height:0; }
+    .slider {
+      position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+      background: var(--chip-bg); transition: .2s; border-radius: 999px; border: 1px solid var(--border);
+    }
+    .slider:before {
+      position:absolute; content:""; height:18px; width:18px; left:3px; top:2px;
+      background: var(--bg); transition: .2s; border-radius:50%; border:1px solid var(--border);
+    }
+    input:checked + .slider { background: var(--accent); }
+    input:checked + .slider:before { transform: translateX(20px); }
+
+    /* Log styles minimal */
+    .logLine { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; padding: 2px 4px; }
+    .logLine .ts { color: var(--muted); }
+    .logLine .cat-error { color: #ef4444; }
+  </style>
 </head>
 <body>
 <header class="app-header">
@@ -14,10 +91,22 @@
       <span class="logo" aria-hidden="true"></span>
       <span>Vantage Qlink Command Console</span>
     </div>
-    <span id="hb-status" class="badge">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span id="conn-label">Not connected</span>
-    </span>
+
+    <div class="row" style="gap:1rem;">
+      <div class="theme-switch" title="Toggle dark mode">
+        <span class="small" id="theme-name">Light</span>
+        <label class="switch">
+          <!-- checked = dark -->
+          <input id="theme-toggle" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <span id="hb-status" class="badge">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="conn-label">Not connected</span>
+      </span>
+    </div>
   </div>
 </header>
 
@@ -90,6 +179,33 @@
 
 <script>
   const $ = (sel) => document.querySelector(sel);
+  const THEME_KEY = 'ui.theme';
+
+  // Theme handling (persisted). Checkbox reflects dark=true.
+  function applyTheme(t){
+    document.documentElement.setAttribute('data-theme', t);
+    const isDark = t === 'dark';
+    const nameEl = $('#theme-name');
+    const toggle = $('#theme-toggle');
+    if (toggle) toggle.checked = isDark;
+    if (nameEl) nameEl.textContent = isDark ? 'Dark' : 'Light';
+  }
+
+  function setTheme(t){
+    localStorage.setItem(THEME_KEY, t);
+    applyTheme(t);
+  }
+
+  function initTheme(){
+    const saved = localStorage.getItem(THEME_KEY);
+    applyTheme(saved || 'light'); // default light
+    const toggle = $('#theme-toggle');
+    if (toggle) {
+      toggle.addEventListener('change', () => {
+        setTheme(toggle.checked ? 'dark' : 'light');
+      });
+    }
+  }
 
   function fetchWithTimeout(url, opts = {}) {
     const timeoutMs = Number(opts.timeoutMs == null ? 8000 : opts.timeoutMs);
@@ -394,8 +510,10 @@
   }
 
   window.addEventListener('load', async () => {
+    initTheme(); // ensure theme is applied before rendering
+
     await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
-    // Debounce re-filtering for smoother typing on large lists
+
     const filterEl = document.getElementById('cmd-filter');
     if (filterEl) filterEl.addEventListener('input', debounce(renderCommandsTable, 150));
 
