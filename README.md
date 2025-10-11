@@ -256,7 +256,7 @@ Open `http://<pi>:3000/`:
 
 ## Screenshots
 
-> Place images in `docs/` and update the paths if you change locations.
+> TODO
 
 ![UI – Commands](docs/screenshot-commands.png)
 ![UI – Logs Tail](docs/screenshot-logs.png)
@@ -297,6 +297,36 @@ Using the community **HTTP‑SWITCH** accessory:
 * **Push + confirm**: on receiving a `VOS` `SW m s b v`, the app does a single `VGS#` confirm and updates the cache
 * **`PUSH_FRESH_MS`**: window where push‑confirmed state can short‑circuit `/status/vgs`
 * **Whitelist**: built from Homebridge config; `HB_WHITELIST_STRICT: true` means empty → deny all
+
+## Utility scripts
+
+In ./scripts, there's add_hb_switch.sh which will either create JSON for a switch and print to STDOUT or modify the homebridge config.json directly. You should check in the homebridge config and restart homebridge for changes to take effect. Note that it randomizes the pullInterval to reduce load on the Vantage master.
+
+Usage:
+  ./add_hb_switch.sh [options] "<name>" <m> <s> <b>
+
+Options:
+  -c, --config PATH   Path to Homebridge config.json (default: /var/lib/homebridge/config.json or ~/.homebridge/config.json)
+  -a, --apply         Write directly into config.json (otherwise prints JSON to stdout)
+  -r, --replace       If an accessory with the same name exists, replace it (default: update/insert by name)
+  --host HOST         API host for URLs (default: 127.0.0.1)
+  --port PORT         API port for URLs (default: 3000)
+
+  # Timings
+  --wait-on N         waitMs for ON (default: 800)
+  --wait-off N        waitMs for OFF (default: 500)
+  --quiet N           quietMs for status (default: 300)
+  --max N             maxMs for status (default: 2200)
+  --cache N           cacheMs for status (default: 800)
+  --jitter N          jitterMs for status (default: 300)
+  --timeout N         timeout for the accessory (default: 3000)
+
+Notes:
+- pullInterval is randomized between 3800–4500 ms on each run.
+- Requires 'jq'.
+- Examples:
+    ./add_hb_switch.sh "Hall Light" 2 20 7
+    ./add_hb_switch.sh -a -c /var/lib/homebridge/config.json "Dining room" 1 9 48
 
 ## Troubleshooting
 
