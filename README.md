@@ -283,6 +283,8 @@ Using the community **HTTP‑SWITCH** accessory:
 }
 ```
 
+TODO: Consider integrating directly with loads instead of switches to provide dimmer level control
+
 **Notes**
 
 * `statusUrl` uses `format=bool` so the plugin expects `true|false`.
@@ -301,7 +303,7 @@ Using the community **HTTP‑SWITCH** accessory:
 ## Utility scripts
 
 In ./scripts, there's add_hb_switch.sh which will either create JSON for a switch and print to STDOUT or modify the homebridge config.json directly. You should check in the homebridge config and restart homebridge for changes to take effect. Note that it randomizes the pullInterval to reduce load on the Vantage master.
-
+```bash
 Usage:
   ./add_hb_switch.sh [options] "<name>" <m> <s> <b>
 
@@ -327,7 +329,7 @@ Notes:
 - Examples:
     ./add_hb_switch.sh "Hall Light" 2 20 7
     ./add_hb_switch.sh -a -c /var/lib/homebridge/config.json "Dining room" 1 9 48
-
+```
 ## Troubleshooting
 
 * **`HTTP 500` on `/status/vgs`** → controller didn’t answer in time
