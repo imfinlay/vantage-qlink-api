@@ -264,8 +264,10 @@ Open `http://<pi>:3000/`:
 
 ## Homebridge integration
 
-Using the community **HTTP‑SWITCH** accessory:
+Using the community **HTTP‑SWITCH** plugin:
 * Get master, station and switch/button IDs from the Qlink program or by pressing buttons and watching the logs in the HTML front end
+* Create an accessory with the following config. Be aware that the plugin someties creates a unique ID, so don't just copy/paste and edit the JSON from another device
+* Use the ./scripts/add_hb_switch to generate the JSON or add directly to the Homebridge config if you're working on the API server.
 
 ```json
 {
@@ -282,6 +284,8 @@ Using the community **HTTP‑SWITCH** accessory:
   "timeout": 3000
 }
 ```
+
+For "one shot" or momentary buttons (i.e. where it's not on or off, but just a single push to execute a switch function) you can use the **HTTP-DUMMY** Homebridge plugin.
 
 TODO: Consider integrating directly with loads instead of switches to provide dimmer level control
 
