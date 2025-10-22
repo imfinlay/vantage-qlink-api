@@ -15,6 +15,12 @@ server.listen(PORT, HOST, () => {
   try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
 });
 
+server.on('error', (err) => {
+  const msg = err?.message || String(err);
+  console.error('[init] HTTP listen error:', msg);
+  try { logLine(`HTTP listen error: ${msg}`); } catch (_) {}
+});
+
 // --- Auto-connect on startup (optional) ---
 try {
   const AUTO = !!config.AUTO_CONNECT;
@@ -62,12 +68,6 @@ try {
 }
 
 // --- end auto-connect ---
-
-server.on('error', (err) => {
-  const msg = err?.message || String(err);
-  console.error('[init] HTTP listen error:', msg);
-  try { logLine(`HTTP listen error: ${msg}`); } catch (_) {}
-});
 
 process.on('SIGINT', () => {
   try { logLine('SIGINT received, shutting down'); } catch (_) {}
