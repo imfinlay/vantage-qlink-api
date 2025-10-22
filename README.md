@@ -95,10 +95,25 @@ module.exports = {
   // Timing & behavior
   MIN_GAP_MS: 120,          // global on‑wire gap between sends
   PUSH_FRESH_MS: 10000,     // how long push‑confirmed state satisfies /status/vgs
+  HANDSHAKE: 'VCL 1 0\r\n', // Optional, set CRLF at startup
   HANDSHAKE_RETRY_MS: 0,    // retry handshake once after N ms (0 = disabled)
 
   // Whitelist behavior (derived from Homebridge config)
   HB_WHITELIST_STRICT: true // true: empty whitelist denies all; false: allow all when empty
+  // Configuratble config path in case you moved it
+  HB_CONFIG_PATH: process.env.HB_CONFIG_PATH || null,
+  HB_CONFIG_CANDIDATES: [
+    '/var/lib/homebridge/config.json'
+  ],
+
+  // Auto-connect on startup
+  // You can also set AUTO_CONNECT=1, AUTO_CONNECT_INDEX=0, AUTO_CONNECT_RETRY_MS=5000 in the environment.
+  AUTO_CONNECT: /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || 1)),
+  AUTO_CONNECT_INDEX: Number(process.env.AUTO_CONNECT_INDEX ?? 0),
+  AUTO_CONNECT_RETRY_MS: Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000),
+
+  // --- optional debug ---
+  debug: { push: false }
 };
 ```
 
