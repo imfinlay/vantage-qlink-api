@@ -24,7 +24,7 @@ module.exports = {
 
   // --- auto-connect on startup (env-overridable) ---
   // You can also set AUTO_CONNECT=1, AUTO_CONNECT_INDEX=0, AUTO_CONNECT_RETRY_MS=5000 in the environment.
-  AUTO_CONNECT: /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || '')),
+  AUTO_CONNECT: /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || 1)),
   AUTO_CONNECT_INDEX: Number(process.env.AUTO_CONNECT_INDEX ?? 0),
   AUTO_CONNECT_RETRY_MS: Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000),
 
