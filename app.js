@@ -1022,7 +1022,7 @@ httpServer.on('error', (err) => {
   const msg = err && err.message ? err.message : String(err);
   console.error('[init] HTTP listen error:', msg);
   try { logLine(`HTTP listen error: ${msg}`); } catch (_) {}
-});
+
 
 // --- Auto-connect on startup (optional) ---
 try {
@@ -1072,7 +1072,7 @@ try {
 }
 
 // --- end auto-connect ---
-
+});
 process.on('SIGINT', () => {
   try { logLine('SIGINT received, shutting down'); } catch (_) {}
   try { if (_logStream) _logStream.end(); } catch (_) {}
