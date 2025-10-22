@@ -1,10 +1,15 @@
+// index.js
 'use strict';
+
 const http = require('http');
 const app = require('./app');
 const ctx = require('./core/context');
 const { logLine } = require('./core/logger');
 const config = require('./config');
-const PORT = Number(process.env.PORT || ctx.config.PORT || 3000);
+// new: tcp helpers
+const { connectToServer, getTcpClient } = require('./core/tcp');
+
+const PORT = Number(process.env.PORT || ctx.config?.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
 const server = http.createServer(app);
@@ -23,10 +28,16 @@ server.on('error', (err) => {
 
 // --- Auto-connect on startup (optional) ---
 try {
-  const AUTO = Boolean(process.env.AUTO_CONNECT ?? config.AUTO_CONNECT ?? 1);
-  const IDX  = Number(process.env.AUTO_CONNECT_INDEX ?? config.AUTO_CONNECT_INDEX ?? 0);
-  const RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? config.AUTO_CONNECT_RETRY_MS ?? 0);
-  logLine('[auto] Auto Connect is $[AUTO]');
+  // robust truthy parsing (env/config may be "0","1","true","false","on","off")
+  const AUTO = (() => {
+    const v = String(process.env.AUTO_CONNECT ?? config.AUTO_CONNECT ?? '1').toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  })();
+  const IDX = Number(process.env.AUTO_CONNECT_INDEX ?? config.AUTO_CONNECT_INDEX ?? 0) || 0;
+  const RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? config.AUTO_CONNECT_RETRY_MS ?? 0) || 0;
+
+  logLine(`[auto] Auto Connect is ${AUTO}`);
+
   if (AUTO) {
     const list = Array.isArray(config.servers) ? config.servers : [];
     const target = list[IDX];
@@ -36,7 +47,7 @@ try {
         logLine(`[auto] no server at index ${IDX}; skipping auto-connect`);
         return;
       }
-      if (tcpClient) {
+      if (typeof getTcpClient === 'function' && getTcpClient()) {
         // already connected or connecting
         logLine('[index.js] already connected; skipping auto-connect');
         return;
@@ -56,20 +67,19 @@ try {
     // initial attempt
     tryConnect('startup');
 
-    // optional: if socket closes unexpectedly and AUTO is on, attempt a reconnect
-    // (this doesn’t fight /disconnect because ensureDisconnected() clears tcpClient first)
+    // optional: reconnect after server close
     const onMaybeReconnect = () => {
-      if (AUTO && RETRY_MS > 0) setTimeout(() => tryConnect('reconnect'), Math.max(500, RETRY_MS));
+      if (AUTO && RETRY_MS > 0) {
+        setTimeout(() => tryConnect('reconnect'), Math.max(500, RETRY_MS));
+      }
     };
     // attach once per process
-    httpServer.on('close', onMaybeReconnect);
+    server.on('close', onMaybeReconnect);
   }
 } catch (e) {
   try { logLine(`[index.js] auto-connect setup error: ${e.message}`); } catch (_) {}
 }
-
 // --- end auto-connect ---
-
 
 process.on('SIGINT', () => {
   try { logLine('SIGINT received, shutting down'); } catch (_) {}
@@ -77,6 +87,7 @@ process.on('SIGINT', () => {
   try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
   process.exit(0);
 });
+
 process.on('SIGTERM', () => {
   try { logLine('SIGTERM received, shutting down'); } catch (_) {}
   try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
