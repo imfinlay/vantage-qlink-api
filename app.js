@@ -1017,6 +1017,44 @@ const httpServer = app.listen(PORT, HOST, () => {
   try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
 });
 
+// --- Auto-connect on startup (optional) ---
+try {
+  if (config.AUTO_CONNECT) {
+    const list = Array.isArray(config.servers) ? config.servers : [];
+    const idx = Number.isFinite(config.AUTO_CONNECT_INDEX) ? config.AUTO_CONNECT_INDEX : 0;
+    const target = list[idx];
+
+    if (!target) {
+      logLine('[init] AUTO_CONNECT enabled but server index is invalid');
+    } else {
+      (async function bootConnect() {
+        try {
+          await connectToServer(target);
+          logLine(`[init] Auto-connected to ${target.name || target.host}:${target.port}`);
+        } catch (err) {
+          logLine(`[init] Auto-connect failed: ${err.message}`);
+          const retry = Number(config.AUTO_CONNECT_RETRY_MS || 0);
+          if (retry > 0) {
+            setTimeout(async function retryOnceMore() {
+              if (tcpClient) return; // already connected by user/UI
+              try {
+                await connectToServer(target);
+                logLine(`[init] Auto-connected (retry) to ${target.name || target.host}:${target.port}`);
+              } catch (e2) {
+                logLine(`[init] Auto-connect retry failed: ${e2.message}`);
+                setTimeout(retryOnceMore, retry); // keep trying
+              }
+            }, retry);
+          }
+        }
+      })();
+    }
+  }
+} catch (_) {}
+// --- end auto-connect ---
+
+
+
 httpServer.on('error', (err) => {
   const msg = err && err.message ? err.message : String(err);
   console.error('[init] HTTP listen error:', msg);
