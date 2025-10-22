@@ -11,8 +11,8 @@ const server = http.createServer(app);
 ctx.httpServer = server;
 
 server.listen(PORT, HOST, () => {
-  console.log(`[init index.js] HTTP listening on ${HOST}:${PORT}`);
-  try { logLine(`init HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
+  console.log(`[init] HTTP listening on ${HOST}:${PORT}`);
+  try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
 });
 
 server.on('error', (err) => {
@@ -21,6 +21,54 @@ server.on('error', (err) => {
   try { logLine(`HTTP listen error: ${msg}`); } catch (_) {}
 });
 
+// --- Auto-connect on startup (optional) ---
+try {
+  const AUTO = Boolean(process.env.AUTO_CONNECT ?? config.AUTO_CONNECT ?? 1);
+  const IDX  = Number(process.env.AUTO_CONNECT_INDEX ?? config.AUTO_CONNECT_INDEX ?? 0);
+  const RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? config.AUTO_CONNECT_RETRY_MS ?? 0);
+  logline('[auto] Auto Connect is $[AUTO]');
+  if (AUTO) {
+    const list = Array.isArray(config.servers) ? config.servers : [];
+    const target = list[IDX];
+
+    const tryConnect = async (why = 'startup') => {
+      if (!target) {
+        logLine(`[auto] no server at index ${IDX}; skipping auto-connect`);
+        return;
+      }
+      if (tcpClient) {
+        // already connected or connecting
+        logLine('[index.js] already connected; skipping auto-connect');
+        return;
+      }
+      try {
+        logLine(`[auto] connecting (${why}) to ${target.name || target.host}:${target.port}`);
+        await connectToServer(target);
+        logLine(`[auto] connected to ${target.name || target.host}:${target.port}`);
+      } catch (err) {
+        logLine(`[auto] connect failed: ${err && err.message ? err.message : String(err)}`);
+        if (RETRY_MS > 0) {
+          setTimeout(() => tryConnect('retry'), Math.max(500, RETRY_MS));
+        }
+      }
+    };
+
+    // initial attempt
+    tryConnect('startup');
+
+    // optional: if socket closes unexpectedly and AUTO is on, attempt a reconnect
+    // (this doesn’t fight /disconnect because ensureDisconnected() clears tcpClient first)
+    const onMaybeReconnect = () => {
+      if (AUTO && RETRY_MS > 0) setTimeout(() => tryConnect('reconnect'), Math.max(500, RETRY_MS));
+    };
+    // attach once per process
+    httpServer.on('close', onMaybeReconnect);
+  }
+} catch (e) {
+  try { logLine(`[app.js] auto-connect setup error: ${e.message}`); } catch (_) {}
+}
+
+// --- end auto-connect ---
 
 
 process.on('SIGINT', () => {
