@@ -26,7 +26,7 @@ try {
   const AUTO = Boolean(process.env.AUTO_CONNECT ?? config.AUTO_CONNECT ?? 1);
   const IDX  = Number(process.env.AUTO_CONNECT_INDEX ?? config.AUTO_CONNECT_INDEX ?? 0);
   const RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? config.AUTO_CONNECT_RETRY_MS ?? 0);
-  logline('[auto] Auto Connect is $[AUTO]');
+  logLine('[auto] Auto Connect is $[AUTO]');
   if (AUTO) {
     const list = Array.isArray(config.servers) ? config.servers : [];
     const target = list[IDX];
