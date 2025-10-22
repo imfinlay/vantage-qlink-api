@@ -27,9 +27,9 @@ module.exports = {
   ],
 
 // Auto-connect on startup
-	AUTO_CONNECT = /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || ''));
-	AUTO_CONNECT_INDEX = Number(process.env.AUTO_CONNECT_INDEX ?? 0);   // which entry in config.servers
-	AUTO_CONNECT_RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000); // 0 = no retry
+	AUTO_CONNECT = /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || '')),
+	AUTO_CONNECT_INDEX = Number(process.env.AUTO_CONNECT_INDEX ?? 0),   // which entry in config.servers
+	AUTO_CONNECT_RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000), // 0 = no retry
 
   // --- optional debug ---
   debug: { push: false }
