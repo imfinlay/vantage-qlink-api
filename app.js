@@ -1026,7 +1026,7 @@ httpServer.on('error', (err) => {
 
 // --- Auto-connect on startup (optional) ---
 try {
-  const AUTO = !!config.AUTO_CONNECT;
+  const AUTO = config.AUTO_CONNECT;
   const IDX  = Number(process.env.AUTO_CONNECT_INDEX ?? config.AUTO_CONNECT_INDEX ?? 0);
   const RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? config.AUTO_CONNECT_RETRY_MS ?? 0);
 
