@@ -3,7 +3,7 @@ const http = require('http');
 const app = require('./app');
 const ctx = require('./core/context');
 const { logLine } = require('./core/logger');
-
+const config = require('./config');
 const PORT = Number(process.env.PORT || ctx.config.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -65,7 +65,7 @@ try {
     httpServer.on('close', onMaybeReconnect);
   }
 } catch (e) {
-  try { logLine(`[app.js] auto-connect setup error: ${e.message}`); } catch (_) {}
+  try { logLine(`[index.js] auto-connect setup error: ${e.message}`); } catch (_) {}
 }
 
 // --- end auto-connect ---

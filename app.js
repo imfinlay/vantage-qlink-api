@@ -1017,7 +1017,6 @@ const httpServer = app.listen(PORT, HOST, () => {
   try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
 });
 
-
 httpServer.on('error', (err) => {
   const msg = err && err.message ? err.message : String(err);
   console.error('[init] HTTP listen error:', msg);
