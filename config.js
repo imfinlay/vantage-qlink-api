@@ -12,24 +12,21 @@ module.exports = {
   MIN_GAP_MS: 120,
   MIN_POLL_INTERVAL_MS: 400,
   PUSH_FRESH_MS: 10000,
-  HANDSHAKE: 'VCL 1 0\r\n', //Set the crlf in case something else messed it up
+  HANDSHAKE: 'VCL 1 0\r\n',   // CRLF included
   HANDSHAKE_RETRY_MS: 0,
   HB_WHITELIST_STRICT: true,
 
   // --- whitelist discovery (username-free) ---
-  // If set, use this exact path. Otherwise we’ll probe candidates (below).
   HB_CONFIG_PATH: process.env.HB_CONFIG_PATH || null,
-
-  // Additional candidates to probe
-  // $HOME/.homebridge/config.json is added automatically in app.js.
   HB_CONFIG_CANDIDATES: [
     '/var/lib/homebridge/config.json'
   ],
 
-// Auto-connect on startup
-	AUTO_CONNECT = /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || '')),
-	AUTO_CONNECT_INDEX = Number(process.env.AUTO_CONNECT_INDEX ?? 0),   // which entry in config.servers
-	AUTO_CONNECT_RETRY_MS = Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000), // 0 = no retry
+  // --- auto-connect on startup (env-overridable) ---
+  // You can also set AUTO_CONNECT=1, AUTO_CONNECT_INDEX=0, AUTO_CONNECT_RETRY_MS=5000 in the environment.
+  AUTO_CONNECT: /^(1|true|yes)$/i.test(String(process.env.AUTO_CONNECT || '')),
+  AUTO_CONNECT_INDEX: Number(process.env.AUTO_CONNECT_INDEX ?? 0),
+  AUTO_CONNECT_RETRY_MS: Number(process.env.AUTO_CONNECT_RETRY_MS ?? 5000),
 
   // --- optional debug ---
   debug: { push: false }
