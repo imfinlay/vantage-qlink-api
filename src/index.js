@@ -11,8 +11,8 @@ const server = http.createServer(app);
 ctx.httpServer = server;
 
 server.listen(PORT, HOST, () => {
-  console.log(`[init] HTTP listening on ${HOST}:${PORT}`);
-  try { logLine(`HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
+  console.log(`[init index.js] HTTP listening on ${HOST}:${PORT}`);
+  try { logLine(`init HTTP listening on ${HOST}:${PORT}`); } catch (_) {}
 });
 
 server.on('error', (err) => {
