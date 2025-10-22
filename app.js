@@ -1041,6 +1041,7 @@ try {
       }
       if (tcpClient) {
         // already connected or connecting
+        logLine('[app.js] already connected; skipping auto-connect');
         return;
       }
       try {

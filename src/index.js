@@ -37,6 +37,7 @@ try {
         return;
       }
       if (tcpClient) {
+      	logLine('[index.js] already connected; skipping auto-connect');
         // already connected or connecting
         return;
       }
