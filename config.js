@@ -12,7 +12,7 @@ module.exports = {
   MIN_GAP_MS: 120,
   MIN_POLL_INTERVAL_MS: 400,
   PUSH_FRESH_MS: 10000,
-  HANDSHAKE: 'VCL 1 0\r\n',
+  HANDSHAKE: 'VCL 1 0\r\n', //Set the crlf in case something else messed it up
   HANDSHAKE_RETRY_MS: 0,
   HB_WHITELIST_STRICT: true,
 

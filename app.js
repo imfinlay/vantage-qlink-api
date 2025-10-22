@@ -200,7 +200,10 @@ function connectToServer(target) {
     const socket = new net.Socket();
     let done = false;
 
-    socket.setTimeout(10000);
+	// Had some issues with timeout
+    //socket.setTimeout(10000); 
+    socket.setTimeout(0);               // 0 = disable idle timeout
+    socket.setKeepAlive(true, 30000);   // send keepalive every ~30s
 
     socket.once('connect', () => {
       socket.setNoDelay(true); 
@@ -208,15 +211,24 @@ function connectToServer(target) {
       connectedServer = target;
       resetRecv();
       socket.on('data', appendRecv);
-		try { if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
-
-		try {
-		  if (HANDSHAKE_RETRY_MS > 0) setTimeout(() => {
-			try { if (tcpClient === socket && typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE); } catch (_) {}
-		  }, HANDSHAKE_RETRY_MS);
-		} catch (_) {}
+      // Optional handshake — only if configured
+      try {
+        if (typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE);
+      } catch (_) {}
+      
+      // Optional second handshake — safe to keep, but it’s fine to disable via config
+      try {
+        if (HANDSHAKE_RETRY_MS > 0)
+          setTimeout(() => {
+            try {
+              if (tcpClient === socket && typeof HANDSHAKE === 'string' && HANDSHAKE.length) tcpClient.write(HANDSHAKE);
+            } catch (_) {}
+          }, HANDSHAKE_RETRY_MS);
+      } catch (_) {}
+		
       done = true; resolve();
     });
+// With idle timeout disabled, this rarely triggers; keep for safety if setTimeout > 0 is ever reintroduced
     socket.once('timeout', () => { if (!done) { socket.destroy(); reject(new Error('TCP connection timeout')); } });
     socket.once('error', (err) => { if (!done) { socket.destroy(); reject(err || new Error('TCP connection error')); } });
     socket.once('close', () => { if (tcpClient === socket) { tcpClient = null; connectedServer = null; } });
