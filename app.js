@@ -1068,7 +1068,7 @@ try {
     httpServer.on('close', onMaybeReconnect);
   }
 } catch (e) {
-  try { logLine(`[auto] auto-connect setup error: ${e.message}`); } catch (_) {}
+  try { logLine(`[app.js] auto-connect setup error: ${e.message}`); } catch (_) {}
 }
 
 // --- end auto-connect ---
