@@ -4,6 +4,7 @@ const { logLine } = require('./logger');
 
 function keyOf(m, s, b) { return `${Number(m)}/${Number(s)}/${Number(b)}`; }
 const vgsKey = (m, s, b) => `${m}-${s}-${b}`;
+const loadKey = (m, e, mod, load) => `${m}-${e}-${mod}-${load}`;
 
 function processIncomingText(chunkUtf8) {
   ctx.INCOMING_TEXT_BUF += chunkUtf8;
@@ -17,6 +18,8 @@ function processIncomingText(chunkUtf8) {
       processIncomingLineForSW(line);
       processIncomingLineForVGS(line);
       processIncomingLineForRGS(line);
+      processIncomingLineForRLB(line);
+      processIncomingLineForRGB(line);
       processIncomingLineForBare01(line);
     }
   }
@@ -79,6 +82,73 @@ function processIncomingLineForRGS(rawLine) {
   }
 }
 
+function processIncomingLineForRLB(rawLine) {
+  const re = /(?:^|\s)RLB#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)(?:\s+([-+]?\d*(?:\.\d+)?))?/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) {
+    const master = Number(m[1]);
+    const enclosure = Number(m[2]);
+    const modulePos = Number(m[3]);
+    const load = Number(m[4]);
+    const level = Number(m[5]);
+    const fade = (m[6] != null && m[6] !== '') ? Number(m[6]) : null;
+    const key = loadKey(master, enclosure, modulePos, load);
+    const raw = String(m[0]).trim();
+    const rec = {
+      ts: Date.now(),
+      level,
+      fade,
+      raw,
+      bytes: Buffer.byteLength(raw, 'utf8'),
+      source: 'RLB'
+    };
+    ctx.LOAD_CACHE.set(key, rec);
+    const list = ctx.LOAD_AWAITERS.get(key);
+    if (list && list.length) {
+      ctx.LOAD_AWAITERS.delete(key);
+      for (const entry of list) {
+        try {
+          clearTimeout(entry.timeout);
+          entry.resolve(raw);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+function processIncomingLineForRGB(rawLine) {
+  const re = /(?:^|\s)RGB#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) {
+    const master = Number(m[1]);
+    const enclosure = Number(m[2]);
+    const modulePos = Number(m[3]);
+    const load = Number(m[4]);
+    const level = Number(m[5]);
+    const key = loadKey(master, enclosure, modulePos, load);
+    const raw = String(m[0]).trim();
+    const rec = {
+      ts: Date.now(),
+      level,
+      fade: null,
+      raw,
+      bytes: Buffer.byteLength(raw, 'utf8'),
+      source: 'RGB'
+    };
+    ctx.LOAD_CACHE.set(key, rec);
+    const list = ctx.LOAD_AWAITERS.get(key);
+    if (list && list.length) {
+      ctx.LOAD_AWAITERS.delete(key);
+      for (const entry of list) {
+        try {
+          clearTimeout(entry.timeout);
+          entry.resolve(raw);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
 function parseRgsLine(text) {
   const re = new RegExp('(?:^|\\s)RGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
@@ -88,6 +158,40 @@ function parseVgsLine(text) {
   const re = new RegExp('(?:^|\\s)VGS#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)\\b');
   const m = String(text).match(re);
   return m ? { m: Number(m[1]), s: Number(m[2]), b: Number(m[3]), v: Number(m[4]) } : null;
+}
+
+function parseRlbLine(text) {
+  const re = new RegExp('(?:^|\\s)RLB#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)(?:\\s+([-+]?\\d*(?:\\.\\d+)?))?');
+  const m = String(text).match(re);
+  if (!m) return null;
+  return {
+    type: 'RLB',
+    master: Number(m[1]),
+    enclosure: Number(m[2]),
+    module: Number(m[3]),
+    load: Number(m[4]),
+    level: Number(m[5]),
+    fade: (m[6] != null && m[6] !== '') ? Number(m[6]) : null
+  };
+}
+
+function parseRgbLine(text) {
+  const re = new RegExp('(?:^|\\s)RGB#?\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(-?\\d+)');
+  const m = String(text).match(re);
+  if (!m) return null;
+  return {
+    type: 'RGB',
+    master: Number(m[1]),
+    enclosure: Number(m[2]),
+    module: Number(m[3]),
+    load: Number(m[4]),
+    level: Number(m[5]),
+    fade: null
+  };
+}
+
+function parseLoadLine(text) {
+  return parseRlbLine(text) || parseRgbLine(text);
 }
 function parseStateFromAny(text) {
   const r = parseRgsLine(text) || parseVgsLine(text);
@@ -123,7 +227,7 @@ function onSWEvent({ m, s, b, v }) {
 
 module.exports = {
   processIncomingText, processIncomingLineForSW, processIncomingLineForVGS,
-  processIncomingLineForRGS, processIncomingLineForBare01,
-  parseRgsLine, parseVgsLine, parseStateFromAny, onSWEvent,
-  keyOf, vgsKey
+  processIncomingLineForRGS, processIncomingLineForRLB, processIncomingLineForRGB, processIncomingLineForBare01,
+  parseRgsLine, parseVgsLine, parseRlbLine, parseRgbLine, parseLoadLine, parseStateFromAny, onSWEvent,
+  keyOf, vgsKey, loadKey
 };
