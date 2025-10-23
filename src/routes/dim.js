@@ -73,6 +73,7 @@ router.post('/dim', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Not connected.' });
     }
     const body = req.body || {};
+
     const master = toInt(body.m ?? body.master);
     const enclosure = toInt(body.e ?? body.enclosure);
     const modulePos = toInt(body.module ?? body.mod ?? body.modulePos);
