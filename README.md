@@ -39,7 +39,7 @@
 * Parses **VOS push** lines like `SW m s b v`, does a one‑shot `VGS#` confirm, and updates a state cache that can short‑circuit polling for a short window.
 * Serves a **simple Web UI** for sending commands, viewing logs, and browsing available commands.
 
-* **VERY IMPORTANT!** The back-end app does NOT auto-connect to the Vantage Qlink IP thing. I left this in the web UI (i.e. you HAVE to manually connect) because the Qlink application which lets you program the system connects directly to the same IP/port, so I wanted to be able to disconnect and/or troubleshoot the Vantage system easily. Mine, every time there's a daylight savings time change, gets its timers messed up and I have to reload the programming. 
+* **VERY IMPORTANT!** The back-end app does auto-connect to the Vantage Qlink IP Enabler. Connect/Disconnect in the web UI (i.e. you can manually disconnect and connect) because the Qlink application which lets you program the system connects directly to the same IP/port, so I wanted to be able to disconnect and/or troubleshoot the Vantage system easily. Mine, every time there's a daylight savings time change, gets its timers messed up and I have to reload the programming. 
 
 ## Architecture
 
@@ -307,9 +307,10 @@ Open `http://<pi>:3000/`:
 
 > TODO
 
-![UI – Commands](docs/screenshot-commands.png)
-![UI – Logs Tail](docs/screenshot-logs.png)
-![UI – Send Command](docs/screenshot-send.png)
+<img width="1415" height="690" alt="image" src="https://github.com/user-attachments/assets/8ad94415-700f-498b-be6c-4cd117c2d3fc" />
+
+<img width="1111" height="593" alt="image" src="https://github.com/user-attachments/assets/3a41d91c-c3ab-4827-803a-dcff7f183a9d" />
+
 
 ## Homebridge integration
 
