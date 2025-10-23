@@ -344,31 +344,50 @@ The `/dim` endpoints expose load-level control. Configure the plugin so brightne
 
 ```json
 {
-  "accessory": "HttpLightbulb",
+  "accessory": "HTTP-LIGHTBULB",
   "name": "Kitchen Pendants",
-  "setBrightness": {
+  "debug": false,
+  "onUrl": {
     "url": "http://127.0.0.1:3000/dim",
     "method": "POST",
     "headers": { "Content-Type": "application/json" },
-    "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":{{BRIGHTNESS}},\"fade\":3}"
+    "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":90}"
   },
-  "getBrightness": {
-    "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level",
+  "offUrl": {
+    "url": "http://127.0.0.1:3000/dim",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":0}"
+  },
+  "brightness": {
+    "setUrl": {
+      "url": "http://127.0.0.1:3000/dim",
+      "method": "POST",
+      "headers": { "Content-Type": "application/json" },
+      "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":%s}"
+    },
+    "statusUrl": {
+      "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level&cacheMs=100&maxMs=2800",
+      "method": "GET",
+      "statusPattern": "^(\\d{1,3})$"
+    }
+  },
+  "statusUrl": {
+    "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level&cacheMs=100&maxMs=2800",
     "method": "GET"
   },
-  "getOnOff": {
-    "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level",
-    "method": "GET",
-    "responseFormatter": "{{#if (gt BODY 0)}}true{{else}}false{{/if}}"
-  }
+  "statusPattern": "^\\s*(?:[1-9]\\d?|100)\\s*$",
+  "pullInterval": 2153,
+  "timeout": 3000
 }
 ```
 
-Replace `{{BRIGHTNESS}}` with the templating token your plugin exposes (e.g., `%b`, `{{BRIGHTNESS}}`, etc.). Omitting `fade` falls back to `DEFAULT_LOAD_FADE_SECONDS`.
+Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templating) with whatever token your plugin exposes. Omitting `fade` falls back to `DEFAULT_LOAD_FADE_SECONDS`.
 
 **Notes**
 
-* `statusUrl` uses `format=bool` so the plugin expects `true|false`.
+* The top-level `statusPattern` treats any value above `0` as `true` so HomeKit reports the load as Off when the level is zero.
+* Both status URLs use `format=level` so the body is a plain `0-100` string.
 * `cacheMs` lets the server satisfy polls from its cache briefly.
 * `quietMs`/`maxMs` tune when a status response is considered complete.
 * Use `pullInterval` ≥ **3.5s** and add **jitter** to avoid alignment across many accessories.
