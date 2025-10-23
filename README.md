@@ -98,6 +98,10 @@ module.exports = {
   HANDSHAKE: 'VCL 1 0\r\n', // Optional, set CRLF at startup
   HANDSHAKE_RETRY_MS: 0,    // retry handshake once after N ms (0 = disabled)
 
+  // Direct load dimming
+  DEFAULT_LOAD_FADE_SECONDS: 3, // fallback fade when /dim POST omits fade
+  LOAD_AWAITERS_MAX_PER_KEY: 200, // concurrent awaiters allowed per load key
+
   // Whitelist behavior (derived from Homebridge config)
   HB_WHITELIST_STRICT: true // true: empty whitelist denies all; false: allow all when empty
   // Configuratble config path in case you moved it
@@ -249,6 +253,36 @@ All endpoints are `GET` unless noted.
 * Accepts `RGS# m s b v` or `VGS# m s b v` (or bare `0|1`) - this is the detailed response to VGS#
 * The **last field** is treated as the boolean state (non‑zero = `1`)
 
+### Load dimming (direct load control)
+
+* `POST /dim` (JSON)
+
+  ```json
+  {
+    "master": 3,
+    "enclosure": 4,
+    "module": 1,
+    "load": 2,
+    "level": 75,
+    "fade": 3.5,
+    "maxMs": 2200
+  }
+  ```
+
+  * Sends `VLB# m enclosure module load level [fade]` to set the dim level
+  * Omitting `fade` uses `DEFAULT_LOAD_FADE_SECONDS` from `config.js`
+  * `504` on timeout, `429` when awaiters are saturated, `400` on validation failure
+  * Successful responses include `{ ok, level, fade, raw, source, ts, ageMs, cached, command, requested }`
+
+* `GET /dim?m=<master>&e=<enclosure>&module=<module>&load=<load>&format=<json|raw|level>&cacheMs=&maxMs=`
+
+  * Issues `VGB# m enclosure module load` and waits for `RGB` feedback
+  * Cache hits return immediately with `X-Load-Cache: hit`; misses trigger a new poll
+  * `format=raw` emits the raw `RGB/RLB` line, `format=level` emits only the numeric level, default JSON matches the POST body
+  * `cacheMs` (default `MIN_POLL_INTERVAL_MS`) controls cache reuse; `maxMs` caps how long the awaiter waits
+
+Both endpoints attach `X-Load-Command` with the dispatched line plus headers (`X-Load-Level`, `X-Load-Fade`, `X-Load-Source`) for quick introspection.
+
 ### Receive buffer (debug)
 
 * `GET /recv?format=utf8|hex|base64&start=&end=`
@@ -279,6 +313,8 @@ Open `http://<pi>:3000/`:
 
 ## Homebridge integration
 
+### Switches (HTTP‑SWITCH plugin)
+
 Using the community **HTTP‑SWITCH** plugin:
 * Get master, station and switch/button IDs from the Qlink program or by pressing buttons and watching the logs in the HTML front end
 * Create an accessory with the following config. Be aware that the plugin someties creates a unique ID, so don't just copy/paste and edit the JSON from another device
@@ -302,11 +338,56 @@ Using the community **HTTP‑SWITCH** plugin:
 
 For "one shot" or momentary buttons (i.e. where it's not on or off, but just a single push to execute a switch function) you can use the **HTTP-DUMMY** Homebridge plugin.
 
-TODO: Consider integrating directly with loads instead of switches to provide dimmer level control
+### Dimmable loads (homebridge-http-lightbulb)
+
+The `/dim` endpoints expose load-level control. Configure the plugin so brightness writes `POST /dim` with JSON containing your load address and the desired level (0‑100), and poll `GET /dim` for status. Example using [homebridge-http-lightbulb](https://github.com/Supereg/homebridge-http-lightbulb):
+
+```json
+{
+  "accessory": "HTTP-LIGHTBULB",
+  "name": "Kitchen Pendants",
+  "debug": false,
+  "onUrl": {
+    "url": "http://127.0.0.1:3000/dim",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":90}"
+  },
+  "offUrl": {
+    "url": "http://127.0.0.1:3000/dim",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":0}"
+  },
+  "brightness": {
+    "setUrl": {
+      "url": "http://127.0.0.1:3000/dim",
+      "method": "POST",
+      "headers": { "Content-Type": "application/json" },
+      "body": "{\"master\":3,\"enclosure\":1,\"module\":1,\"load\":2,\"level\":%s}"
+    },
+    "statusUrl": {
+      "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level&cacheMs=100&maxMs=2800",
+      "method": "GET",
+      "statusPattern": "^(\\d{1,3})$"
+    }
+  },
+  "statusUrl": {
+    "url": "http://127.0.0.1:3000/dim?m=3&e=1&module=1&load=2&format=level&cacheMs=100&maxMs=2800",
+    "method": "GET"
+  },
+  "statusPattern": "^\\s*(?:[1-9]\\d?|100)\\s*$",
+  "pullInterval": 2153,
+  "timeout": 3000
+}
+```
+
+Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templating) with whatever token your plugin exposes. Omitting `fade` falls back to `DEFAULT_LOAD_FADE_SECONDS`.
 
 **Notes**
 
-* `statusUrl` uses `format=bool` so the plugin expects `true|false`.
+* The top-level `statusPattern` treats any value above `0` as `true` so HomeKit reports the load as Off when the level is zero.
+* Both status URLs use `format=level` so the body is a plain `0-100` string.
 * `cacheMs` lets the server satisfy polls from its cache briefly.
 * `quietMs`/`maxMs` tune when a status response is considered complete.
 * Use `pullInterval` ≥ **3.5s** and add **jitter** to avoid alignment across many accessories.
@@ -366,6 +447,11 @@ Notes:
 * **No push confirms in log**
 
   * Ensure VOS push is enabled in the controller; confirm app logs include `PUSH` lines
+* **`git branch -m work load-dimming` says `No branch named 'work'`**
+
+  * Run the command from the repository root (where `package.json` lives) so Git can see the branches
+  * If you are already on `load-dimming`, drop the old name from the command: `git branch -m load-dimming`
+  * List local branches with `git branch` to confirm the current name before pushing with `git push -u origin load-dimming`
 
 ## Roadmap
 

@@ -16,6 +16,10 @@ module.exports = {
   HANDSHAKE_RETRY_MS: 0,
   HB_WHITELIST_STRICT: true,
 
+  // --- dimming defaults ---
+  DEFAULT_LOAD_FADE_SECONDS: 3,
+  LOAD_AWAITERS_MAX_PER_KEY: 200,
+
   // --- whitelist discovery (username-free) ---
   HB_CONFIG_PATH: process.env.HB_CONFIG_PATH || null,
   HB_CONFIG_CANDIDATES: [

@@ -21,6 +21,7 @@ app.use(require('./routes/core'));
 app.use(require('./routes/connection'));
 app.use(require('./routes/io'));
 app.use(require('./routes/test'));
+app.use(require('./routes/dim'));
 app.use(require('./routes/vgs'));
 app.use(require('./routes/admin'));
 app.use(require('./routes/whitelist'));

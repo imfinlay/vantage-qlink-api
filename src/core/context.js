@@ -7,6 +7,31 @@ catch (e1) {
   catch (e2) { config = {}; }
 }
 
+const toNumberOr = (value, fallback) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const defaultLoadFadeSeconds = (() => {
+  if (process.env.DEFAULT_LOAD_FADE_SECONDS != null) {
+    return toNumberOr(process.env.DEFAULT_LOAD_FADE_SECONDS, 3);
+  }
+  if (config && Object.prototype.hasOwnProperty.call(config, 'DEFAULT_LOAD_FADE_SECONDS')) {
+    return toNumberOr(config.DEFAULT_LOAD_FADE_SECONDS, 3);
+  }
+  return 3;
+})();
+
+const loadAwaitersMax = (() => {
+  if (process.env.LOAD_AWAITERS_MAX_PER_KEY != null) {
+    return toNumberOr(process.env.LOAD_AWAITERS_MAX_PER_KEY, 200);
+  }
+  if (config && Object.prototype.hasOwnProperty.call(config, 'LOAD_AWAITERS_MAX_PER_KEY')) {
+    return toNumberOr(config.LOAD_AWAITERS_MAX_PER_KEY, 200);
+  }
+  return 200;
+})();
+
 module.exports = {
   config,
   LOG_FILE_PATH: (config.LOG_FILE_PATH) || path.join(__dirname, '..', 'app.log'),
@@ -19,6 +44,7 @@ module.exports = {
   HB_WHITELIST_STRICT: (config && Object.prototype.hasOwnProperty.call(config, 'HB_WHITELIST_STRICT')) ? !!config.HB_WHITELIST_STRICT : true,
   HANDSHAKE_RETRY_MS: Number(config.HANDSHAKE_RETRY_MS || process.env.HANDSHAKE_RETRY_MS || 0),
   LOG_RING_MAX: Number(process.env.LOG_RING_MAX || (config && config.LOG_RING_MAX) || 2000),
+  DEFAULT_LOAD_FADE_SECONDS: defaultLoadFadeSeconds,
 
   app: null,
   httpServer: null,
@@ -39,6 +65,11 @@ module.exports = {
   AWAITERS: new Map(),
   VGS_WAIT_ORDER: [],
   AWAITERS_MAX_PER_KEY: Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200),
+
+  LOAD_CACHE: new Map(),
+  LOAD_INFLIGHT: new Map(),
+  LOAD_AWAITERS: new Map(),
+  LOAD_AWAITERS_MAX_PER_KEY: loadAwaitersMax,
 
   HB_CONFIG_PATH: null,
   WHITELIST: new Set(),
