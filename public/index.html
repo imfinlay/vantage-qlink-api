@@ -103,7 +103,7 @@
     <label>Limit <input id="log-limit" type="number" min="10" max="2000" step="10" value="200" /></label>
     <label>Interval (ms) <input id="log-interval" type="number" min="250" step="250" value="2000" /></label>
     <label><input id="auto-scroll" type="checkbox" checked /> Auto-scroll</label>
-    <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView()" /></label>
+    <label>Text filter <input id="log-filter" type="text" placeholder="type to filter..." oninput="renderLogView({ force: true })" /></label>
     <button class="btn" id="tail-toggle" onclick="toggleTail()">Start Tail</button>
     <button class="btn" onclick="doLogFetchOnce()">Fetch Once</button>
     <button class="btn" onclick="clearLogView()">Clear View</button>
@@ -150,13 +150,22 @@
   let tailBusy = false;
   let tailTimer = null;
   const LOG_DOM_CAP = 1000;
+  const LOG_SCROLL_STICKY = 12;
   let __logLines = [];
+  let __logNeedsRender = false;
 
   function autoScrollIfNeeded(){
     if (!$('#auto-scroll') || !$('#auto-scroll').checked) return;
     const c = $('#log-container'); c.scrollTop = c.scrollHeight + 1000;
   }
-  function clearLogView(){ const el = $('#log-container'); if (el) el.textContent=''; }
+  function clearLogView(){
+    const el = $('#log-container');
+    if (el) {
+      el.textContent='';
+      el.scrollTop = 0;
+    }
+    __logNeedsRender = false;
+  }
   function toggleTail(){
     const btn = $('#tail-toggle');
     if (tailTimer) { clearInterval(tailTimer); tailTimer = null; if (btn) btn.textContent = 'Start Tail'; }
@@ -205,12 +214,22 @@
     node.appendChild(tsSpan); node.appendChild(body);
     return { node };
   }
-  function renderLogView(){
+  function renderLogView(opts){
+    opts = opts || {};
     const el = $('#log-container'); if (!el) return;
     const scrollToggle = $('#auto-scroll');
     const shouldAutoScroll = !!(scrollToggle && scrollToggle.checked);
     const prevScrollTop = el.scrollTop;
     const filt = ($('#log-filter')?.value || '').toLowerCase();
+    const prevMaxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+    const wasNearBottom = prevMaxScroll - prevScrollTop <= LOG_SCROLL_STICKY;
+
+    if (!opts.force && !shouldAutoScroll && !wasNearBottom) {
+      __logNeedsRender = true;
+      return;
+    }
+    __logNeedsRender = false;
+
     const frag = document.createDocumentFragment(); let count = 0;
     for (const rawLine of __logLines) {
       if (!rawLine) continue;
@@ -255,6 +274,26 @@
     } catch (e) {
       clientLog('copy failed: ' + (e?.message || e));
     }
+  }
+
+  const logContainerEl = $('#log-container');
+  if (logContainerEl) {
+    logContainerEl.addEventListener('scroll', () => {
+      if (!__logNeedsRender) return;
+      const maxScroll = Math.max(0, logContainerEl.scrollHeight - logContainerEl.clientHeight);
+      if (maxScroll - logContainerEl.scrollTop <= LOG_SCROLL_STICKY) {
+        renderLogView({ force: true });
+      }
+    });
+  }
+
+  const autoScrollToggle = $('#auto-scroll');
+  if (autoScrollToggle) {
+    autoScrollToggle.addEventListener('change', () => {
+      if (autoScrollToggle.checked) {
+        renderLogView({ force: true });
+      }
+    });
   }
 
   // ---------- server & commands ----------
