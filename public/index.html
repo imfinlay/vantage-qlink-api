@@ -210,7 +210,6 @@
     const scrollToggle = $('#auto-scroll');
     const shouldAutoScroll = !!(scrollToggle && scrollToggle.checked);
     const prevScrollTop = el.scrollTop;
-    const prevMaxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
     const filt = ($('#log-filter')?.value || '').toLowerCase();
     const frag = document.createDocumentFragment(); let count = 0;
     for (const rawLine of __logLines) {
@@ -224,14 +223,14 @@
     if (shouldAutoScroll) {
       autoScrollIfNeeded();
     } else {
-      const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
-      // Keep prior viewport position bounded to available scroll range.
-      const targetTop = Math.min(prevScrollTop, maxScroll);
-      el.scrollTop = targetTop;
-      // If previous position exceeded new max (e.g., filtered view), ensure we're at end if needed.
-      if (prevScrollTop > prevMaxScroll && maxScroll > prevMaxScroll) {
-        el.scrollTop = Math.min(prevScrollTop, maxScroll);
-      }
+      const restore = () => {
+        const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+        const targetTop = Math.min(prevScrollTop, maxScroll);
+        el.scrollTop = targetTop;
+      };
+      restore();
+      requestAnimationFrame(restore);
+      setTimeout(restore, 0);
     }
   }
 
