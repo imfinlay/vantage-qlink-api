@@ -103,6 +103,37 @@ html[data-theme="dark"] body {
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--status-off); display: inline-block; transition: background-color .2s ease; }
 .app-header.connected .status-dot { background: var(--status-ok); }
 
+.app-nav {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+  padding: 0 1rem .75rem 1rem;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.app-nav .nav-link {
+  border: none !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  padding: .5rem .75rem;
+  border-radius: 999px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: background-color .2s ease, color .2s ease;
+}
+.app-nav .nav-link:hover,
+.app-nav .nav-link:focus-visible {
+  background: var(--chip-bg) !important;
+  color: var(--fg) !important;
+  outline: none;
+}
+.app-nav .nav-link.active {
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
+}
+
 /* --------- Tables --------- */
 table { width: 100%; border-collapse: collapse; }
 thead th {

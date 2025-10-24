@@ -41,10 +41,15 @@
         <span id="conn-label">Not connected</span>
       </span>
     </div>
-  </div>
+	</div>
+	<nav class="app-nav" aria-label="Primary">
+		<button class="nav-link active" data-page="home" type="button">Home</button>
+		<button class="nav-link" data-page="utilities" type="button">Utilities</button>
+	</nav>
 </header>
 
 <main class="app-main">
+	<section id="page-home" class="app-page" data-page="home" aria-labelledby="page-home-title">
 
 <div class="row">
   <label>Server:
@@ -56,7 +61,7 @@
 </div>
 
 <div class="card">
-  <h2>Send Command</h2>
+  <h2 id="page-home-title">Send Command</h2>
   <div class="row">
     <input id="command-input" type="text" placeholder="Type command (e.g., VGS 2 20 7)" size="40" class="monospace" />
     <button class="btn primary" onclick="onSendClick()">Send</button>
@@ -109,13 +114,23 @@
     <button class="btn" onclick="clearLogView()">Clear View</button>
     <button class="btn" onclick="copyVisibleLog()">Copy Visible</button>
   </div>
-  <div id="log-container" class="card log-scroll" tabindex="-1" aria-label="Logs output (read only)"></div>
+	<div id="log-container" class="card log-scroll" tabindex="-1" aria-label="Logs output (read only)"></div>
 </div>
+	</section>
+
+	<section id="page-utilities" class="app-page hidden" data-page="utilities" aria-labelledby="page-utilities-title">
+		<div class="card">
+			<h2 id="page-utilities-title">Utilities</h2>
+			<p class="small">Utility tools will live here. Check back soon.</p>
+		</div>
+	</section>
+</main>
 
 <script>
   // ---------- helpers ----------
   const $ = (sel) => document.querySelector(sel);
   const THEME_KEY = 'ui.theme';
+  const ACTIVE_PAGE_KEY = 'ui.activePage';
 
   function applyTheme(t){
     document.documentElement.setAttribute('data-theme', t);
@@ -130,6 +145,37 @@
     const current = document.documentElement.getAttribute('data-theme') || 'light';
     applyTheme(current);
     $('#theme-toggle')?.addEventListener('change', () => setTheme($('#theme-toggle').checked ? 'dark' : 'light'));
+  }
+
+  function setActivePage(page, opts = {}) {
+    const target = page === 'utilities' ? 'utilities' : 'home';
+    document.querySelectorAll('.app-page').forEach((pageEl) => {
+      const key = pageEl.getAttribute('data-page');
+      pageEl.classList.toggle('hidden', key !== target);
+    });
+    document.querySelectorAll('.app-nav .nav-link').forEach((btn) => {
+      const key = btn.getAttribute('data-page');
+      btn.classList.toggle('active', key === target);
+    });
+    const mainEl = document.querySelector('.app-main');
+    if (mainEl) mainEl.setAttribute('data-active-page', target);
+    if (!opts.skipPersist) {
+      try { localStorage.setItem(ACTIVE_PAGE_KEY, target); } catch (_) {}
+    }
+  }
+
+  function initPageNav(){
+    const buttons = Array.from(document.querySelectorAll('.app-nav .nav-link'));
+    if (!buttons.length) return;
+    let initial = 'home';
+    try {
+      const saved = localStorage.getItem(ACTIVE_PAGE_KEY);
+      if (saved === 'utilities') initial = 'utilities';
+    } catch (_) {}
+    setActivePage(initial, { skipPersist: true });
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => setActivePage(btn.getAttribute('data-page')));
+    });
   }
 
   function fetchWithTimeout(url, opts = {}) {
@@ -366,6 +412,8 @@
     if (!items.length) tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
   }
 
+  initPageNav();
+
   window.addEventListener('load', async () => {
     initTheme();
     await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
@@ -375,6 +423,5 @@
     await doLogFetchOnce();
   });
 </script>
-</main>
 </body>
 </html>
