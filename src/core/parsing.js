@@ -40,7 +40,7 @@ function processIncomingLineForVGS(rawLine) {
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     const key = vgsKey(M, S, B);
-    ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length });
+    ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length, source: 'tcp:vgs' });
     const list = ctx.AWAITERS.get(key);
     if (list && list.length) {
       ctx.AWAITERS.delete(key);
@@ -55,7 +55,7 @@ function processIncomingLineForBare01(rawLine) {
   const v = Number(m[1]);
   const key = ctx.VGS_WAIT_ORDER.shift();
   if (!key) return;
-  ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (v ? 1 : 0), raw: String(v), bytes: String(rawLine).length });
+  ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (v ? 1 : 0), raw: String(v), bytes: String(rawLine).length, source: 'tcp:bare' });
   const list = ctx.AWAITERS.get(key);
   if (list && list.length) {
     ctx.AWAITERS.delete(key);
@@ -69,7 +69,7 @@ function processIncomingLineForRGS(rawLine) {
   while ((m = re.exec(rawLine)) !== null) {
     const M = Number(m[1]), S = Number(m[2]), B = Number(m[3]), V = Number(m[4]);
     const key = vgsKey(M, S, B);
-    ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length });
+    ctx.VGS_CACHE.set(key, { ts: Date.now(), value: (V ? 1 : 0), raw: String(V), bytes: String(rawLine).length, source: 'tcp:rgs' });
 
     const list = ctx.AWAITERS.get(key);
     if (list && list.length) {

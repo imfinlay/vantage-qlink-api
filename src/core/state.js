@@ -11,7 +11,7 @@ function setState(m, s, b, value) {
     ctx.STATE.set(k, { value, ts: now });
     logLine(`PUSH state ${k} = ${value}`);
     const keyV = vgsKey(m, s, b);
-    ctx.VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1 });
+    ctx.VGS_CACHE.set(keyV, { ts: now, value, raw: String(value), bytes: 1, source: 'push-state' });
   } else {
     ctx.STATE.set(k, { value, ts: now });
   }
