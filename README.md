@@ -121,6 +121,15 @@ module.exports = {
 };
 ```
 
+### Debug logging
+
+- Set `debug: true` in `config.js` to enable verbose `VGS RESP …` entries for switch polls. This shows whether a response came from the cache or from the Vantage, which is useful to identify whether you have set the cache timeout (either globally or per device) high enough relative to the load on your system. For example:
+
+  [2025-10-27T01:21:29.190Z] CMD/API -> VGS# 1 9 23
+  [2025-10-27T01:21:29.234Z] RX <- RGS# 1 9 23 0
+  [2025-10-27T01:21:29.235Z] VGS RESP 1-9-23 [tcp:await, stream, age=0ms] RGS# 1 9 23 0
+  [2025-10-27T01:21:33.077Z] VGS RESP 1-9-23 [tcp:await, cache-hit, age=3842ms] RGS# 1 9 23 0
+
 > The app also reads the Homebridge `config.json` (path usually `/var/lib/homebridge/config.json`) to build a whitelist of allowed (master, station, button). You can refresh it via the UI or a server restart.
 
 ## Run (PM2)
