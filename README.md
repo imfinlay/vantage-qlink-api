@@ -402,6 +402,45 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 * `quietMs`/`maxMs` tune when a status response is considered complete.
 * Use `pullInterval` ≥ **3.5s** and add **jitter** to avoid alignment across many accessories.
 
+### REST parameter reference
+
+- **GET `/status/vgs`**
+
+  | Param      | Alias(es) | Purpose                                                                    |
+  |------------|-----------|----------------------------------------------------------------------------|
+  | `m`        | –         | Required master index (integer)                                            |
+  | `s`        | –         | Required station/controller index (integer)                                |
+  | `b`        | –         | Required button address within the station (integer)                       |
+  | `format`   | –         | Response shape: `json` (default), `bool`, or `raw`                         |
+  | `quietMs`  | –         | Optional wait hint (currently parsed but unused)                           |
+  | `maxMs`    | –         | Deadline for awaiting the TCP reply (falls back to 1200 ms)                |
+  | `cacheMs`  | –         | Cache freshness window in milliseconds (default `MIN_POLL_INTERVAL_MS`)    |
+  | `jitterMs` | –         | Optional random delay before polling (default 0)                           |
+
+- **POST `/dim`**
+
+  | Field        | Alias(es)                     | Purpose / accepted values                                         |
+  |--------------|------------------------------|-------------------------------------------------------------------|
+  | `m`          | `master`                     | Required master index                                             |
+  | `e`          | `enclosure`                  | Required enclosure ID (1‑4)                                       |
+  | `module`     | `mod`, `modulePos`           | Required module position (1‑4)                                    |
+  | `load`       | `l`                          | Required load number (1‑8)                                        |
+  | `level`      | `value`, `levelPercent`      | Load level 0‑100                                                  |
+  | `fade`       | `fadeSeconds`, `speed`       | Fade duration in seconds (0‑6553); defaults to config fallback    |
+  | `maxMs`      | `timeoutMs`                  | Optional command timeout (min 50 ms, default 2000 ms)             |
+
+- **GET `/dim`**
+
+  | Param      | Alias(es)           | Purpose                                                            |
+  |------------|---------------------|--------------------------------------------------------------------|
+  | `m`        | `master`            | Required master index                                              |
+  | `e`        | `enclosure`         | Required enclosure ID                                              |
+  | `module`   | `mod`, `modulePos`  | Required module position                                           |
+  | `load`     | `l`                 | Required load number                                               |
+  | `format`   | –                   | Response shape: `json` (default), `level`, or `raw`                |
+  | `cacheMs`  | –                   | Cache freshness window (defaults to `MIN_POLL_INTERVAL_MS`)        |
+  | `maxMs`    | `timeoutMs`         | Optional command timeout (min 50 ms, default 2000 ms)              |
+
 ## Timing, caching & coalescing
 
 * **`MIN_GAP_MS`**: enforced between all sends to the controller (avoid bursty traffic)
