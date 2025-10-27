@@ -45,7 +45,10 @@ function respondWith(res, format, key, value, raw, meta = {}) {
   if (note) tags.push(note);
   const tagStr = tags.length ? ` [${tags.join(', ')}]` : '';
   const preview = previewRaw(raw);
-  logLine(`VGS RESP ${key || 'unknown'}${tagStr}${preview ? ` ${preview}` : ''}`);
+  const debugEnabled = !!(ctx && ctx.config && ctx.config.debug === true);
+  if (debugEnabled) {
+    logLine(`VGS RESP ${key || 'unknown'}${tagStr}${preview ? ` ${preview}` : ''}`);
+  }
 
   return sendFormatted(res, format, value, raw);
 }
