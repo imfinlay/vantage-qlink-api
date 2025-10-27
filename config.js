@@ -10,7 +10,7 @@ module.exports = {
 
   // --- timings / behavior ---
   MIN_GAP_MS: 120,
-  MIN_POLL_INTERVAL_MS: 400,
+  MIN_POLL_INTERVAL_MS: 4000,
   PUSH_FRESH_MS: 10000,
   HANDSHAKE: 'VCL 1 0\r\n',   // CRLF included
   HANDSHAKE_RETRY_MS: 0,
