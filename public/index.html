@@ -112,6 +112,12 @@
   <div id="log-container" class="card log-scroll" tabindex="-1" aria-label="Logs output (read only)"></div>
 </div>
 
+</main>
+
+<footer class="app-footer">
+  <span class="small">Last updated: <span id="last-updated">—</span></span>
+</footer>
+
 <script>
   // ---------- helpers ----------
   const $ = (sel) => document.querySelector(sel);
@@ -419,8 +425,15 @@
     if (!items.length) tb.innerHTML = '<tr><td colspan="3"><em>No matches.</em></td></tr>';
   }
 
+  function initLastUpdated(){
+    const el = $('#last-updated'); if (!el) return;
+    const d = new Date(document.lastModified);
+    el.textContent = isNaN(d.getTime()) ? document.lastModified : d.toLocaleString();
+  }
+
   window.addEventListener('load', async () => {
     initTheme();
+    initLastUpdated();
     await Promise.allSettled([ populateServers(), refreshStatus(), populateCommands() ]);
     const filterEl = document.getElementById('cmd-filter');
     if (filterEl) filterEl.addEventListener('input', debounce(renderCommandsTable, 150));
@@ -428,6 +441,5 @@
     await doLogFetchOnce();
   });
 </script>
-</main>
 </body>
 </html>
