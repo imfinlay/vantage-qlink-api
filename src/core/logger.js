@@ -35,13 +35,21 @@ function _openLogStream() {
 // Start with a stream only if enabled
 _openLogStream();
 
+// Trimming to exactly LOG_RING_MAX on every push means Array#splice has to
+// shift the whole remaining ring on every call once at capacity. Instead,
+// let the ring overshoot by a slack margin and trim back to MAX in one
+// batched splice, amortizing the O(n) shift cost over many pushes.
+const LOG_RING_TRIM_SLACK = 200;
+
 function logLine(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
 
   // Always keep a memory ring for quick UI tailing (even when disk logging is disabled)
   try {
     ctx.LOG_RING.push(line.endsWith('\n') ? line.slice(0, -1) : line);
-    if (ctx.LOG_RING.length > ctx.LOG_RING_MAX) ctx.LOG_RING.splice(0, ctx.LOG_RING.length - ctx.LOG_RING_MAX);
+    if (ctx.LOG_RING.length > ctx.LOG_RING_MAX + LOG_RING_TRIM_SLACK) {
+      ctx.LOG_RING.splice(0, ctx.LOG_RING.length - ctx.LOG_RING_MAX);
+    }
   } catch (_) {}
 
   if (!ctx.LOG_ENABLED) return; // disk logging disabled: skip file writes

@@ -103,6 +103,14 @@ html[data-theme="dark"] body {
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--status-off); display: inline-block; transition: background-color .2s ease; }
 .app-header.connected .status-dot { background: var(--status-ok); }
 
+/* --------- Footer --------- */
+.app-footer {
+  max-width: 1100px; margin: 0 auto; padding: .75rem 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  transition: border-color .2s ease;
+}
+
 /* --------- Tables --------- */
 table { width: 100%; border-collapse: collapse; }
 thead th {
