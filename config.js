@@ -9,8 +9,8 @@ module.exports = {
   LOG_FILE_PATH: '/home/homeauto/apps/vantage-qlink-api/app.log',
 
   // --- timings / behavior ---
-  MIN_GAP_MS: 120,
-  MIN_POLL_INTERVAL_MS: 4000,
+  MIN_GAP_MS: 250,
+  MIN_POLL_INTERVAL_MS: 6000,
   PUSH_FRESH_MS: 10000,
   HANDSHAKE: 'VCL 1 0\r\n',   // CRLF included
   HANDSHAKE_RETRY_MS: 0,
