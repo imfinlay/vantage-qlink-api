@@ -15,11 +15,14 @@ function processIncomingText(chunkUtf8) {
     if (rest.startsWith('\n') && ctx.INCOMING_TEXT_BUF[idx] === '\r') rest = rest.slice(1);
     ctx.INCOMING_TEXT_BUF = rest;
     if (line.length) {
-      processIncomingLineForSW(line);
-      processIncomingLineForVGS(line);
-      processIncomingLineForRGS(line);
-      processIncomingLineForRLB(line);
-      processIncomingLineForRGB(line);
+      // Cheap substring pre-checks avoid running every backtracking regex on
+      // every line; each regex below requires its literal keyword to match,
+      // so these are exact necessary conditions, not heuristics.
+      if (line.indexOf('SW') !== -1) processIncomingLineForSW(line);
+      if (line.indexOf('VGS') !== -1) processIncomingLineForVGS(line);
+      if (line.indexOf('RGS') !== -1) processIncomingLineForRGS(line);
+      if (line.indexOf('RLB') !== -1) processIncomingLineForRLB(line);
+      if (line.indexOf('RGB') !== -1) processIncomingLineForRGB(line);
       processIncomingLineForBare01(line);
     }
   }
