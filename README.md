@@ -100,6 +100,9 @@ module.exports = {
 
   // Direct load dimming
   DEFAULT_LOAD_FADE_SECONDS: 3, // fallback fade when /dim POST omits fade
+
+  // File logging at startup (default true). The LOG_ENABLED env var overrides this.
+  LOG_ENABLED: true,
   LOAD_AWAITERS_MAX_PER_KEY: 200, // concurrent awaiters allowed per load key
 
   // Whitelist behavior (derived from Homebridge config)
@@ -311,7 +314,7 @@ Open `http://<pi>:3000/`:
 * **Wait/Collect**: optionally set `quietMs` and `maxMs` for `/send`
 * **Commands**: searchable table from `commands.csv`; click to copy into the input
 * **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll and view filtering
-* **File logging**: Start/Stop logging buttons with a status line showing whether logging is on and the log file path. Stopping only halts writes to the log file; the in‑memory buffer behind the Logs Tail keeps filling, so the live view still works.
+* **File logging**: Start/Stop logging buttons with a status line showing whether logging is on and the log file path. Stopping only halts writes to the log file; the in‑memory buffer behind the Logs Tail keeps filling, so the live view still works. The buttons only affect the running process: after a restart, logging returns to the startup default (on unless `LOG_ENABLED` is `false`/`0` in `config.js` or the environment; the environment wins).
 * **Footer**: shows a "Last updated" timestamp, taken from the modified time of `index.html`, so it reflects when the UI was last deployed to that host.
 
 > Log rotation is not handled by the app; the log file grows until something rotates it (e.g. `logrotate`).

@@ -3,10 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const ctx = require('./context');
 
-// default to enabled unless explicitly disabled by env/config
-if (typeof ctx.LOG_ENABLED !== 'boolean') {
-  ctx.LOG_ENABLED = (process.env.LOG_ENABLED === '0' || process.env.LOG_ENABLED === 'false') ? false : true;
-}
+// File logging is on unless LOG_ENABLED is 0/false in the environment or config.js (env wins).
+ctx.LOG_ENABLED = !['0', 'false'].includes(String(process.env.LOG_ENABLED ?? ctx.config.LOG_ENABLED).toLowerCase());
 
 try { fs.mkdirSync(path.dirname(ctx.LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
