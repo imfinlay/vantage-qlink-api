@@ -10,7 +10,6 @@ ctx.app = app;
 app.disable('x-powered-by');
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
 
 // Serve static files (defaults to <repo>/public)
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.join(__dirname, '..', 'public');
