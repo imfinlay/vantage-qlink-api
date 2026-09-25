@@ -4,17 +4,13 @@ const router = express.Router();
 const ctx = require('../core/context');
 const { logLine } = require('../core/logger');
 const { sleep } = require('../core/queue');
-const { parseStateFromAny } = require('../core/parsing');
+const { parseStateFromAny, keyOf, vgsKey } = require('../core/parsing');
 const { sendVGSWithAwaiter } = require('./vgs_helpers');
 
 function sendFormatted(res, format, value, raw) {
-  try {
-    if (format === 'bool') return res.status(200).type('text/plain').send(value ? 'true' : 'false');
-    if (format === 'raw')  return res.status(200).type('text/plain').send(raw != null ? String(raw) : '');
-    return res.status(200).json({ ok: true, value, raw });
-  } catch (_) {
-    return res.status(200).type('text/plain').send(value ? 'true' : 'false');
-  }
+  if (format === 'bool') return res.status(200).type('text/plain').send(value ? 'true' : 'false');
+  if (format === 'raw')  return res.status(200).type('text/plain').send(raw != null ? String(raw) : '');
+  return res.status(200).json({ ok: true, value, raw });
 }
 
 function previewRaw(raw) {
@@ -54,30 +50,23 @@ function respondWith(res, format, key, value, raw, meta = {}) {
 }
 
 router.get('/status/vgs', async (req, res) => {
-  let requestKey = null;
+  const m = parseInt(req.query.m, 10);
+  const s = parseInt(req.query.s, 10);
+  const b = parseInt(req.query.b, 10);
+  const valid = Number.isFinite(m) && Number.isFinite(s) && Number.isFinite(b);
+  const key = valid ? vgsKey(m, s, b) : null;   // also used by the catch block's stale-cache fallback
+  const fmt = String(req.query.format || '').toLowerCase();
   try {
-    if (!ctx.tcpClient) { 
-      try { const ip = req.ip || 'unknown'; } catch (_) {}
-      return res.status(400).json({ ok:false, message: 'Not connected.' });
-    }
-    const m = parseInt(req.query.m, 10);
-    const s = parseInt(req.query.s, 10);
-    const b = parseInt(req.query.b, 10);
-    if (!Number.isFinite(m) || !Number.isFinite(s) || !Number.isFinite(b))
-      return res.status(400).json({ ok:false, message: 'Missing or invalid m/s/b.' });
+    if (!ctx.tcpClient) return res.status(400).json({ ok:false, message: 'Not connected.' });
+    if (!valid) return res.status(400).json({ ok:false, message: 'Missing or invalid m/s/b.' });
 
     const cmd = `VGS# ${m} ${s} ${b}`;
-    const quietMs  = Number(req.query.quietMs || 200);
     const maxMs    = Number(req.query.maxMs   || 1200);
     const cacheMs  = Math.max(0, Number(req.query.cacheMs || ctx.MIN_POLL_INTERVAL_MS));
     const jitterMs = Math.max(0, Number(req.query.jitterMs || 0));
-    const key = `${m}-${s}-${b}`;
-    requestKey = key;
-    let now = Date.now();
-    const fmt = String(req.query.format || '').toLowerCase();
+    const now = Date.now();
 
-    const kState = `${Number(m)}/${Number(s)}/${Number(b)}`;
-    const st = ctx.STATE.get(kState);
+    const st = ctx.STATE.get(keyOf(m, s, b));
     if (st && (now - st.ts) < ctx.PUSH_FRESH_MS) {
       const value = st.value;
       const ageMs = now - st.ts;
@@ -140,25 +129,12 @@ router.get('/status/vgs', async (req, res) => {
   } catch (err) {
     logLine(`VGS status error: ${err?.message || String(err)}`);
 
-    const format = String((req.query && req.query.format) || '').toLowerCase();
-    let key = null;
-    try {
-      const mm = parseInt(req.query.m, 10);
-      const ss = parseInt(req.query.s, 10);
-      const bb = parseInt(req.query.b, 10);
-      if (Number.isFinite(mm) && Number.isFinite(ss) && Number.isFinite(bb)) {
-        key = `${mm}-${ss}-${bb}`;
-      }
-    } catch (_) {}
-
-    if (!key && requestKey) key = requestKey;
-
     if (key) {
       const stale = ctx.VGS_CACHE.get(key);
       if (stale) {
         res.setHeader('X-Status-Fallback', 'stale-cache');
         const ageMs = stale && typeof stale.ts === 'number' ? (Date.now() - stale.ts) : null;
-        return respondWith(res, format, key, stale ? stale.value : null, stale ? stale.raw : null, {
+        return respondWith(res, fmt, key, stale ? stale.value : null, stale ? stale.raw : null, {
           source: (stale && stale.source) || 'cache',
           cacheState: 'cache-stale',
           ageMs
@@ -167,7 +143,7 @@ router.get('/status/vgs', async (req, res) => {
     }
 
     res.setHeader('X-Status-Error', err?.message || 'error');
-    if (format === 'bool') {
+    if (fmt === 'bool') {
       return respondWith(res, 'bool', key || 'unknown', 0, null, {
         source: 'error',
         cacheState: 'cache-miss'
