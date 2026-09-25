@@ -518,6 +518,7 @@ Notes:
 * Server‑Sent Events / WebSocket log streaming (replace polling)
 * Optional per‑key rate limits / circuit breaker when a device flaps
 * Built‑in health endpoint with queue depth and awaiter counts
+* Auto‑reconnect when the TCP connection to the controller drops (`AUTO_CONNECT_RETRY_MS` currently only retries a failed initial connect)
 
 ## License
 
