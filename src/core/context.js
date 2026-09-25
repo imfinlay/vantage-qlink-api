@@ -54,8 +54,6 @@ module.exports = {
 
   LOG_RING: [],
   _logStream: null,
-  _logBusy: false,
-  _logQueue: [],
   __queue: [],
   __pumping: false,
   __lastSendAt: 0,

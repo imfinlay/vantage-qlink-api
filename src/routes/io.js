@@ -100,7 +100,7 @@ router.post('/send', async (req, res) => {
 router.get('/logs', (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 200;
-  const lines = tailFile(ctx.LOG_FILE_PATH, limit);
+  const lines = tailFile(limit);
   const fmt = String(req.query.format || '').toLowerCase();
   if (fmt === 'txt') return res.type('text/plain').send(lines.join('\n'));
   return res.json({ file: ctx.LOG_FILE_PATH, count: lines.length, lines });
