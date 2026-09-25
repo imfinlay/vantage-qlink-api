@@ -60,6 +60,10 @@ module.exports = {
   LOAD_INFLIGHT: new Map(),
   LOAD_AWAITERS: new Map(),
   LOAD_AWAITERS_MAX_PER_KEY: num('LOAD_AWAITERS_MAX_PER_KEY', 200),
+  // Trust cached load levels (kept current by "VOL 1" LO reports) instead of the request's cacheMs.
+  LOAD_PUSH: on(pick('LOAD_PUSH', false)),
+  // Safety net for LOAD_PUSH: re-poll an entry older than this (ms) in case reports stopped. 0 = never.
+  LOAD_PUSH_MAX_AGE_MS: num('LOAD_PUSH_MAX_AGE_MS', 600000),
 
   HB_CONFIG_PATH: null,
   WHITELIST: new Set(),

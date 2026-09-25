@@ -82,7 +82,7 @@ npm install
 
 Configuration lives in `config.js` (a sample is checked into the repo).
 
-The numeric timing/limit settings (`MIN_GAP_MS`, `MIN_POLL_INTERVAL_MS`, `PUSH_FRESH_MS`, `HANDSHAKE_RETRY_MS`, `LOG_RING_MAX`, `DEFAULT_LOAD_FADE_SECONDS`, `AWAITERS_MAX_PER_KEY`, `LOAD_AWAITERS_MAX_PER_KEY`), `LOG_FILE_PATH` and `LOG_ENABLED` can also be set as environment variables (e.g. in the PM2 `env` block). **The environment variable wins over `config.js`**, which wins over the built‑in default; an empty variable counts as unset. `HANDSHAKE`, `LINE_ENDING` and `HB_WHITELIST_STRICT` are read from `config.js` only. The `PUBLIC_DIR` environment variable (environment only) changes the directory the web UI is served from (default: the repo's `public/`).
+The numeric timing/limit settings (`MIN_GAP_MS`, `MIN_POLL_INTERVAL_MS`, `PUSH_FRESH_MS`, `HANDSHAKE_RETRY_MS`, `LOG_RING_MAX`, `DEFAULT_LOAD_FADE_SECONDS`, `AWAITERS_MAX_PER_KEY`, `LOAD_AWAITERS_MAX_PER_KEY`, `LOAD_PUSH_MAX_AGE_MS`), `LOAD_PUSH`, `LOG_FILE_PATH` and `LOG_ENABLED` can also be set as environment variables (e.g. in the PM2 `env` block). **The environment variable wins over `config.js`**, which wins over the built‑in default; an empty variable counts as unset. `HANDSHAKE`, `LINE_ENDING` and `HB_WHITELIST_STRICT` are read from `config.js` only. The `PUBLIC_DIR` environment variable (environment only) changes the directory the web UI is served from (default: the repo's `public/`).
 
 **Servers** (multiple supported):
 
@@ -107,6 +107,8 @@ module.exports = {
   // File logging at startup (default true). The LOG_ENABLED env var overrides this.
   LOG_ENABLED: true,
   LOAD_AWAITERS_MAX_PER_KEY: 200, // concurrent awaiters allowed per load key
+  LOAD_PUSH: false,             // true: trust cached load levels kept current by VOL reports (see "Load dimming")
+  LOAD_PUSH_MAX_AGE_MS: 600000, // with LOAD_PUSH, re-poll a load not updated for this long (0 = never)
 
   // Whitelist behavior (derived from Homebridge config)
   HB_WHITELIST_STRICT: true // true: empty whitelist denies all; false: allow all when empty
@@ -274,6 +276,8 @@ All endpoints are `GET` unless noted.
 
 ### Load dimming (direct load control)
 
+> **Use the load's own address.** `m`, `e`, `module` and `load` must identify the load itself, not a "switch pointer", scene button or any other button that only triggers something which then changes the load. A switch's state says what the button is set to, not what the load is doing, and the controller's load reports (below) are keyed by the load address. To find it, change the load and read the `LO <master> <enclosure> <module> <load> <level>` line in the logs; those four numbers are what `/dim` takes.
+
 > **Not supported: station-bus dimmers.** Only enclosure module loads (addressed by master, enclosure, module and load) can be read and set. Loads that live on the station bus, such as wall-box dimmers, low-voltage relay stations and 0–12 V loads, use different Vantage commands (`VGC`/`VLC`, reported as `LS` lines) that this API does not implement.
 
 * `POST /dim` (JSON)
@@ -303,6 +307,18 @@ All endpoints are `GET` unless noted.
   * `cacheMs` (default `MIN_POLL_INTERVAL_MS`) controls cache reuse; `maxMs` caps how long the awaiter waits
 
 Both endpoints attach `X-Load-Command` with the dispatched line plus headers (`X-Load-Level`, `X-Load-Fade`, `X-Load-Source`) for quick introspection.
+
+#### Push updates for loads (optional)
+
+The controller can announce every load change on its own once load reporting is enabled with the V‑command `VOL 1` (send it from the web UI; the manual says it persists across a controller reset, and if it does not, add `VOL 1` to `HANDSHAKE`). Each change arrives as `LO <master> <enclosure> <module> <load> <level>`, where the level is the **target** (a fade produces one line, not a stream). The app always parses these into its load cache.
+
+By default `GET /dim` still uses each request's `cacheMs`. Set `LOAD_PUSH: true` (or the `LOAD_PUSH=1` environment variable) to make it trust the cache instead:
+
+* A load is polled once, the first time it is read; after that its cached level stays current from `LO` reports, and `cacheMs` is ignored. `cacheMs=0` still forces a fresh read.
+* **Safety net:** if reports ever stop (for example `VOL` gets switched off), a load not updated for `LOAD_PUSH_MAX_AGE_MS` (default 10 minutes, `0` = never) is polled again.
+* The load cache is cleared whenever the TCP connection drops or is reconnected, so a change missed while disconnected cannot leave a stale level.
+
+Only turn `LOAD_PUSH` on once you have seen `LO` lines in the logs.
 
 ### Receive buffer (debug)
 
@@ -365,6 +381,8 @@ Using the community **HTTP‑SWITCH** plugin:
 For "one shot" or momentary buttons (i.e. where it's not on or off, but just a single push to execute a switch function) you can use the **HTTP-DUMMY** Homebridge plugin.
 
 ### Dimmable loads (homebridge-http-lightbulb)
+
+Use the load's own address for each dimmer accessory (see the note under "Load dimming"), not the switch or scene button that operates it.
 
 The `/dim` endpoints expose load-level control. Configure the plugin so brightness writes `POST /dim` with JSON containing your load address and the desired level (0‑100), and poll `GET /dim` for status. Example using [homebridge-http-lightbulb](https://github.com/Supereg/homebridge-http-lightbulb):
 
@@ -464,6 +482,7 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 * **Push + confirm**: on receiving a `VOS` `SW m s b v`, the app does a single `VGS#` confirm and updates the cache
 * **`PUSH_FRESH_MS`**: window where push‑confirmed state can short‑circuit `/status/vgs`
 * **`MIN_POLL_INTERVAL_MS`**: floor for `/status/vgs` cache lifetime. Whatever `cacheMs` an accessory sends is raised to at least this, so you can tune polling load in one place (env var or `config.js`) instead of editing every Homebridge accessory. Pass `cacheMs=0` to force a fresh read. (`GET /dim` only uses it as its default.)
+* **`LOAD_PUSH`**: when on, `GET /dim` serves cached load levels (kept current by `LO` reports) instead of honouring `cacheMs`; `LOAD_PUSH_MAX_AGE_MS` re‑polls a load that has gone quiet
 * **Writes drop cached state**: sending a command through `/test/vsw` discards that switch's cached state, so the next `/status/vgs` polls the controller instead of returning the pre‑command value
 * **Whitelist**: built from Homebridge config; `HB_WHITELIST_STRICT: true` means empty → deny all
 

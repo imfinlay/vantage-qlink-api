@@ -171,8 +171,11 @@ router.get('/dim', async (req, res) => {
     const key = loadKey(master, enclosure, modulePos, load);
     const now = Date.now();
 
+    // With LOAD_PUSH the cache is kept current by LO reports, so it stays valid until the
+    // safety-net age; an explicit cacheMs=0 still forces a fresh read.
+    const maxAge = ctx.LOAD_PUSH && cacheMsRaw !== 0 ? (ctx.LOAD_PUSH_MAX_AGE_MS || Infinity) : cacheMs;
     const cached = ctx.LOAD_CACHE.get(key);
-    if (cached && (now - cached.ts) < cacheMs) {
+    if (cached && (now - cached.ts) < maxAge) {
       return sendLoadResponse(res, format, cached, { cached: true });
     }
 

@@ -23,6 +23,7 @@ function processIncomingText(chunkUtf8) {
       if (line.indexOf('RGS') !== -1) processIncomingLineForRGS(line);
       if (line.indexOf('RLB') !== -1) processIncomingLineForRLB(line);
       if (line.indexOf('RGB') !== -1) processIncomingLineForRGB(line);
+      if (line.indexOf('LO') !== -1) processIncomingLineForLO(line);
       processIncomingLineForBare01(line);
     }
   }
@@ -85,71 +86,41 @@ function processIncomingLineForRGS(rawLine) {
   }
 }
 
+// Store a load reading in LOAD_CACHE and wake anything waiting on that load.
+function applyLoad(m, level, fade, source) {
+  const key = loadKey(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]));
+  const raw = String(m[0]).trim();
+  ctx.LOAD_CACHE.set(key, { ts: Date.now(), level, fade, raw, source });
+  const list = ctx.LOAD_AWAITERS.get(key);
+  if (list && list.length) {
+    ctx.LOAD_AWAITERS.delete(key);
+    for (const entry of list) {
+      try { clearTimeout(entry.timeout); entry.resolve(raw); } catch (_) {}
+    }
+  }
+}
+
 function processIncomingLineForRLB(rawLine) {
   const re = /(?:^|\s)RLB#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)(?:\s+([-+]?\d*(?:\.\d+)?))?/g;
   let m;
   while ((m = re.exec(rawLine)) !== null) {
-    const master = Number(m[1]);
-    const enclosure = Number(m[2]);
-    const modulePos = Number(m[3]);
-    const load = Number(m[4]);
-    const level = Number(m[5]);
     const fade = (m[6] != null && m[6] !== '') ? Number(m[6]) : null;
-    const key = loadKey(master, enclosure, modulePos, load);
-    const raw = String(m[0]).trim();
-    const rec = {
-      ts: Date.now(),
-      level,
-      fade,
-      raw,
-      bytes: Buffer.byteLength(raw, 'utf8'),
-      source: 'RLB'
-    };
-    ctx.LOAD_CACHE.set(key, rec);
-    const list = ctx.LOAD_AWAITERS.get(key);
-    if (list && list.length) {
-      ctx.LOAD_AWAITERS.delete(key);
-      for (const entry of list) {
-        try {
-          clearTimeout(entry.timeout);
-          entry.resolve(raw);
-        } catch (_) {}
-      }
-    }
+    applyLoad(m, Number(m[5]), fade, 'RLB');
   }
 }
 
 function processIncomingLineForRGB(rawLine) {
   const re = /(?:^|\s)RGB#?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\b/g;
   let m;
-  while ((m = re.exec(rawLine)) !== null) {
-    const master = Number(m[1]);
-    const enclosure = Number(m[2]);
-    const modulePos = Number(m[3]);
-    const load = Number(m[4]);
-    const level = Number(m[5]);
-    const key = loadKey(master, enclosure, modulePos, load);
-    const raw = String(m[0]).trim();
-    const rec = {
-      ts: Date.now(),
-      level,
-      fade: null,
-      raw,
-      bytes: Buffer.byteLength(raw, 'utf8'),
-      source: 'RGB'
-    };
-    ctx.LOAD_CACHE.set(key, rec);
-    const list = ctx.LOAD_AWAITERS.get(key);
-    if (list && list.length) {
-      ctx.LOAD_AWAITERS.delete(key);
-      for (const entry of list) {
-        try {
-          clearTimeout(entry.timeout);
-          entry.resolve(raw);
-        } catch (_) {}
-      }
-    }
-  }
+  while ((m = re.exec(rawLine)) !== null) applyLoad(m, Number(m[5]), null, 'RGB');
+}
+
+// Unsolicited load-change report (enabled with "VOL 1"): LO <master> <enclosure> <module> <load> <level>
+// The level is the target; a fade produces one line, not a stream.
+function processIncomingLineForLO(rawLine) {
+  const re = /(?:^|\s)LO\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\b/g;
+  let m;
+  while ((m = re.exec(rawLine)) !== null) applyLoad(m, Number(m[5]), null, 'LO');
 }
 
 function parseRgsLine(text) {
@@ -230,7 +201,7 @@ function onSWEvent({ m, s, b, v }) {
 
 module.exports = {
   processIncomingText, processIncomingLineForSW, processIncomingLineForVGS,
-  processIncomingLineForRGS, processIncomingLineForRLB, processIncomingLineForRGB, processIncomingLineForBare01,
+  processIncomingLineForRGS, processIncomingLineForRLB, processIncomingLineForRGB, processIncomingLineForLO, processIncomingLineForBare01,
   parseRgsLine, parseVgsLine, parseRlbLine, parseRgbLine, parseLoadLine, parseStateFromAny, onSWEvent,
   keyOf, vgsKey, loadKey
 };
