@@ -507,7 +507,6 @@ Notes:
 * Server‑Sent Events / WebSocket log streaming (replace polling)
 * Optional per‑key rate limits / circuit breaker when a device flaps
 * Built‑in health endpoint with queue depth and awaiter counts
-* Web UI start/stop logging controls (`public/js/logging-controls.js` and `public/snippets/logging-controls.html` exist but aren't wired into `index.html` yet)
 
 ## License
 
