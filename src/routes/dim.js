@@ -31,6 +31,32 @@ function validateAddress(master, enclosure, modulePos, load) {
   return true;
 }
 
+// Reuse the record the RLB/RGB parser already cached; otherwise build one from the raw reply.
+function recordFor(key, raw, fallback = {}) {
+  let record = ctx.LOAD_CACHE.get(key);
+  if (!record) {
+    const rawStr = String(raw || '').trim();
+    const parsed = parseLoadLine(rawStr);
+    record = {
+      ts: Date.now(),
+      level: parsed ? parsed.level : (fallback.level ?? null),
+      fade: parsed ? parsed.fade : (fallback.fade ?? null),
+      raw: rawStr,
+      bytes: Buffer.byteLength(rawStr, 'utf8'),
+      source: parsed ? parsed.type : null
+    };
+    ctx.LOAD_CACHE.set(key, record);
+  }
+  return record;
+}
+
+function sendErr(res, err, fallbackMessage) {
+  const message = err?.message || fallbackMessage;
+  const low = String(err?.message || '').toLowerCase();
+  const status = low.includes('timeout') ? 504 : low.includes('awaiters limit') ? 429 : 500;
+  return res.status(status).json({ ok: false, message });
+}
+
 function sendLoadResponse(res, format, record, { cached = false, extras = null } = {}) {
   if (cached) res.setHeader('X-Load-Cache', 'hit'); else res.setHeader('X-Load-Cache', 'miss');
   if (record && record.source) res.setHeader('X-Load-Source', record.source);
@@ -110,20 +136,7 @@ router.post('/dim', async (req, res) => {
     res.setHeader('X-Load-Command', cmd);
 
     const raw = await sendLoadWithAwaiter(master, enclosure, modulePos, load, cmd, maxMs);
-    let record = ctx.LOAD_CACHE.get(key);
-    if (!record) {
-      const rawStr = String(raw || '').trim();
-      const parsed = parseLoadLine(rawStr);
-      record = {
-        ts: Date.now(),
-        level: parsed ? parsed.level : level,
-        fade: parsed ? parsed.fade : fade,
-        raw: rawStr,
-        bytes: Buffer.byteLength(rawStr, 'utf8'),
-        source: parsed ? parsed.type : null
-      };
-      ctx.LOAD_CACHE.set(key, record);
-    }
+    const record = recordFor(key, raw, { level, fade });
 
     return sendLoadResponse(res, 'json', record, {
       cached: false,
@@ -134,16 +147,7 @@ router.post('/dim', async (req, res) => {
     });
   } catch (err) {
     logLine(`Dim command failed: ${err?.message || String(err)}`);
-    const message = err?.message || 'Failed to send dim command.';
-    if (err && typeof err.message === 'string') {
-      if (err.message.toLowerCase().includes('timeout')) {
-        return res.status(504).json({ ok: false, message });
-      }
-      if (err.message.toLowerCase().includes('awaiters limit')) {
-        return res.status(429).json({ ok: false, message });
-      }
-    }
-    return res.status(500).json({ ok: false, message });
+    return sendErr(res, err, 'Failed to send dim command.');
   }
 });
 
@@ -185,21 +189,7 @@ router.get('/dim', async (req, res) => {
     res.setHeader('X-Load-Command', cmd);
     const pending = (async () => {
       const raw = await sendLoadWithAwaiter(master, enclosure, modulePos, load, cmd, maxMs);
-      let record = ctx.LOAD_CACHE.get(key);
-      if (!record) {
-        const rawStr = String(raw || '').trim();
-        const parsed = parseLoadLine(rawStr);
-        record = {
-          ts: Date.now(),
-          level: parsed ? parsed.level : null,
-          fade: parsed ? parsed.fade : null,
-          raw: rawStr,
-          bytes: Buffer.byteLength(rawStr, 'utf8'),
-          source: parsed ? parsed.type : null
-        };
-        ctx.LOAD_CACHE.set(key, record);
-      }
-      return record;
+      return recordFor(key, raw);
     })();
 
     ctx.LOAD_INFLIGHT.set(key, pending);
@@ -212,16 +202,7 @@ router.get('/dim', async (req, res) => {
     return sendLoadResponse(res, format, out, { cached: false });
   } catch (err) {
     logLine(`Load status error: ${err?.message || String(err)}`);
-    const message = err?.message || 'Load status failed.';
-    if (err && typeof err.message === 'string') {
-      if (err.message.toLowerCase().includes('timeout')) {
-        return res.status(504).json({ ok: false, message });
-      }
-      if (err.message.toLowerCase().includes('awaiters limit')) {
-        return res.status(429).json({ ok: false, message });
-      }
-    }
-    return res.status(500).json({ ok: false, message });
+    return sendErr(res, err, 'Load status failed.');
   }
 });
 
