@@ -113,7 +113,6 @@ router.get('/status/vgs', async (req, res) => {
         ts: Date.now(),
         value,
         raw: rawStr,
-        bytes: Buffer.byteLength(rawStr, 'utf8'),
         source: 'tcp:await'
       };
       ctx.VGS_CACHE.set(key, rec);

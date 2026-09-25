@@ -71,16 +71,11 @@ try {
 }
 // --- end auto-connect ---
 
-process.on('SIGINT', () => {
-  try { logLine('SIGINT received, shutting down'); } catch (_) {}
-  try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
-  try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  try { logLine('SIGTERM received, shutting down'); } catch (_) {}
-  try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
-  try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
-  process.exit(0);
-});
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try { logLine(`${sig} received, shutting down`); } catch (_) {}
+    try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
+    try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
+    process.exit(0);
+  });
+}

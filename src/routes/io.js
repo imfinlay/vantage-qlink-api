@@ -6,13 +6,6 @@ const { logLine, tailFile } = require('../core/logger');
 const { sendToTCP, sendCmdLogged } = require('../core/tcp');
 const { runQueued, sleep } = require('../core/queue');
 
-function clientIp(req){
-  try { const xf = req.headers['x-forwarded-for']; if (xf) return String(xf).split(',')[0].trim(); } catch (_) {}
-  return req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
-}
-function logHttp(req, msg){ try { logLine(`HTTP ${req.method} ${req.path} from ${clientIp(req)} -> ${msg}`); } catch (_) {} }
-const toOn = (v) => (v === 1 || v === true || v === '1');
-
 router.post('/send', async (req, res) => {
   try {
     if (!ctx.tcpClient) return res.status(400).json({ message: 'Not connected.' });

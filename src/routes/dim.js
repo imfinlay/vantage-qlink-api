@@ -42,7 +42,6 @@ function recordFor(key, raw, fallback = {}) {
       level: parsed ? parsed.level : (fallback.level ?? null),
       fade: parsed ? parsed.fade : (fallback.fade ?? null),
       raw: rawStr,
-      bytes: Buffer.byteLength(rawStr, 'utf8'),
       source: parsed ? parsed.type : null
     };
     ctx.LOAD_CACHE.set(key, record);

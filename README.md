@@ -266,7 +266,7 @@ All endpoints are `GET` unless noted.
 
   * `format=raw` → `"0"` or `"1"` (plain text)
   * `format=bool` → `"true"` or `"false"`
-  * default JSON: `{ ok, sent, state, raw, bytes, cached }`
+  * default JSON: `{ ok, value, raw }` (`value` is `1`/`0`)
 
 **Protocol details**
 
