@@ -34,15 +34,17 @@ function respondWith(res, format, key, value, raw, meta = {}) {
   }
   if (note) res.setHeader('X-VGS-Note', note);
 
-  const tags = [];
-  if (source) tags.push(source);
-  if (cacheState) tags.push(cacheState);
-  if (ageMs != null && Number.isFinite(ageMs)) tags.push(`age=${Math.max(0, Math.round(ageMs))}ms`);
-  if (note) tags.push(note);
-  const tagStr = tags.length ? ` [${tags.join(', ')}]` : '';
-  const preview = previewRaw(raw);
-  const debugEnabled = !!(ctx && ctx.config && ctx.config.debug === true);
-  if (debugEnabled) {
+  const result = `${cacheState}/${source}`;
+  ctx.VGS_STATS.counts[result] = (ctx.VGS_STATS.counts[result] || 0) + 1;
+
+  if (ctx.VGS_DEBUG) {
+    const tags = [];
+    if (source) tags.push(source);
+    if (cacheState) tags.push(cacheState);
+    if (ageMs != null && Number.isFinite(ageMs)) tags.push(`age=${Math.max(0, Math.round(ageMs))}ms`);
+    if (note) tags.push(note);
+    const tagStr = tags.length ? ` [${tags.join(', ')}]` : '';
+    const preview = previewRaw(raw);
     logLine(`VGS RESP ${key || 'unknown'}${tagStr}${preview ? ` ${preview}` : ''}`);
   }
 
@@ -62,7 +64,10 @@ router.get('/status/vgs', async (req, res) => {
 
     const cmd = `VGS# ${m} ${s} ${b}`;
     const maxMs    = Number(req.query.maxMs   || 1200);
-    const cacheMs  = Math.max(0, Number(req.query.cacheMs || ctx.MIN_POLL_INTERVAL_MS));
+    // MIN_POLL_INTERVAL_MS is a floor, so one server setting governs every accessory's cacheMs.
+    // An explicit cacheMs=0 still forces a fresh read (debugging).
+    const asked = req.query.cacheMs === undefined || req.query.cacheMs === '' ? NaN : Number(req.query.cacheMs);
+    const cacheMs = asked === 0 ? 0 : Math.max(Number.isFinite(asked) ? asked : 0, ctx.MIN_POLL_INTERVAL_MS);
     const jitterMs = Math.max(0, Number(req.query.jitterMs || 0));
     const now = Date.now();
 

@@ -5,6 +5,7 @@ const ctx = require('../core/context');
 const { logLine } = require('../core/logger');
 const { runQueued, sleep } = require('../core/queue');
 const { sendCmdLogged } = require('../core/tcp');
+const { keyOf, vgsKey } = require('../core/parsing');
 
 function clientIp(req){
   try { const xf = req.headers['x-forwarded-for']; if (xf) return String(xf).split(',')[0].trim(); } catch (_) {}
@@ -29,6 +30,10 @@ async function vsw(req, res) {
     const buf = await runQueued(async () => {
       const startLen = ctx.RECV_BUFFER.length;
       await sendCmdLogged(cmd);
+      // The switch is changing: drop what we cached for it so the next status read polls the
+      // controller instead of serving the pre-command state (a later push/poll repopulates it).
+      ctx.VGS_CACHE.delete(vgsKey(m, s, b));
+      ctx.STATE.delete(keyOf(m, s, b));
       if (waitMs > 0) { await sleep(waitMs); return ctx.RECV_BUFFER.slice(startLen); }
       return Buffer.alloc(0);
     }, { priority: 10, label: cmd });

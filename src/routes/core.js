@@ -11,7 +11,17 @@ router.get('/servers', (_req, res) => {
 });
 
 router.get('/status', (_req, res) => {
-  res.json({ connected: Boolean(ctx.tcpClient), server: ctx.connectedServer || null });
+  const { since, counts } = ctx.VGS_STATS;
+  let total = 0, hits = 0;
+  for (const [result, n] of Object.entries(counts)) {
+    total += n;
+    if (result.startsWith('cache-hit/')) hits += n;
+  }
+  res.json({
+    connected: Boolean(ctx.tcpClient),
+    server: ctx.connectedServer || null,
+    vgs: { since: new Date(since).toISOString(), total, hits, hitRate: total ? +(hits / total).toFixed(3) : null, counts }
+  });
 });
 
 module.exports = router;

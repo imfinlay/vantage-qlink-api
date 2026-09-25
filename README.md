@@ -96,6 +96,7 @@ module.exports = {
 
   // Timing & behavior
   MIN_GAP_MS: 120,          // global on‑wire gap between sends
+  MIN_POLL_INTERVAL_MS: 6000, // minimum cache lifetime for /status/vgs (a floor under each request's cacheMs)
   PUSH_FRESH_MS: 10000,     // how long push‑confirmed state satisfies /status/vgs
   HANDSHAKE: 'VCL 1 0\r\n', // Optional, set CRLF at startup
   HANDSHAKE_RETRY_MS: 0,    // retry handshake once after N ms (0 = disabled)
@@ -128,7 +129,7 @@ module.exports = {
 
 ### Debug logging
 
-- Set `debug: true` in `config.js` to enable verbose `VGS RESP …` entries for switch polls. This shows whether a response came from the cache or from the Vantage, which is useful to identify whether you have set the cache timeout (either globally or per device) high enough relative to the load on your system. For example:
+- Set `debug: { vgs: true }` in `config.js` (or the `VGS_DEBUG=1` environment variable, which wins; the older `debug: true` also still works) to log a `VGS RESP …` line for every `/status/vgs` answer. It can sit alongside `debug: { push: true }`. This shows whether each response came from the cache (`cache-hit`, with `push-state` or `tcp:…` as the source) or from a live read of the Vantage (`stream`), and `cache-stale` when a failed poll fell back to an old value. That is useful to judge whether the cache time is set high enough for your load. Every poll is logged, so switch it on for a diagnostic session rather than leaving it on. For example:
 
   [2025-10-27T01:21:29.190Z] CMD/API -> VGS# 1 9 23
   [2025-10-27T01:21:29.234Z] RX <- RGS# 1 9 23 0
@@ -231,7 +232,9 @@ All endpoints are `GET` unless noted.
 
 * `POST /connect` → `{ serverIndex }`
 * `POST /disconnect`
-* `GET /status` → `{ connected: boolean, server?: { name, host, port } }`
+* `GET /status` → `{ connected: boolean, server?: { name, host, port }, vgs: { since, total, hits, hitRate, counts } }`
+
+  * `vgs` counts `/status/vgs` answers since the process started, without needing debug logging. `hits` are answers served from cache; `counts` breaks them down as `<cache-state>/<source>`, e.g. `cache-hit/push-state` or `stream/tcp:await`. It resets when the app restarts.
 
 ### Commands & logs
 
@@ -270,6 +273,8 @@ All endpoints are `GET` unless noted.
 * The **last field** is treated as the boolean state (non‑zero = `1`)
 
 ### Load dimming (direct load control)
+
+> **Not supported: station-bus dimmers.** Only enclosure module loads (addressed by master, enclosure, module and load) can be read and set. Loads that live on the station bus, such as wall-box dimmers, low-voltage relay stations and 0–12 V loads, use different Vantage commands (`VGC`/`VLC`, reported as `LS` lines) that this API does not implement.
 
 * `POST /dim` (JSON)
 
@@ -425,7 +430,7 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
   | `format`   | –         | Response shape: `json` (default), `bool`, or `raw`                         |
   | `quietMs`  | –         | Optional wait hint (currently parsed but unused)                           |
   | `maxMs`    | –         | Deadline for awaiting the TCP reply (falls back to 1200 ms)                |
-  | `cacheMs`  | –         | Cache freshness window in milliseconds (default `MIN_POLL_INTERVAL_MS`)    |
+  | `cacheMs`  | –         | Cache freshness window in ms. Omitted or below `MIN_POLL_INTERVAL_MS` → raised to it; `0` forces a fresh read |
   | `jitterMs` | –         | Optional random delay before polling (default 0)                           |
 
 - **POST `/dim`**
@@ -458,6 +463,8 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 * **Coalescing**: multiple concurrent `/status/vgs` for the same (m,s,b) share one on‑wire request
 * **Push + confirm**: on receiving a `VOS` `SW m s b v`, the app does a single `VGS#` confirm and updates the cache
 * **`PUSH_FRESH_MS`**: window where push‑confirmed state can short‑circuit `/status/vgs`
+* **`MIN_POLL_INTERVAL_MS`**: floor for `/status/vgs` cache lifetime. Whatever `cacheMs` an accessory sends is raised to at least this, so you can tune polling load in one place (env var or `config.js`) instead of editing every Homebridge accessory. Pass `cacheMs=0` to force a fresh read. (`GET /dim` only uses it as its default.)
+* **Writes drop cached state**: sending a command through `/test/vsw` discards that switch's cached state, so the next `/status/vgs` polls the controller instead of returning the pre‑command value
 * **Whitelist**: built from Homebridge config; `HB_WHITELIST_STRICT: true` means empty → deny all
 
 ## Utility scripts

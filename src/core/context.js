@@ -13,6 +13,14 @@ const num = (key, fallback) => {
   const n = Number(pick(key, fallback));
   return Number.isFinite(n) ? n : fallback;
 };
+const on = (v) => v != null && !['', '0', 'false'].includes(String(v).toLowerCase());
+
+// Log a "VGS RESP" line per /status/vgs answer. Env VGS_DEBUG wins; otherwise config
+// `debug: true` (legacy) or `debug: { vgs: true }`.
+const vgsDebugEnv = process.env.VGS_DEBUG;
+const vgsDebug = vgsDebugEnv !== undefined && vgsDebugEnv !== ''
+  ? on(vgsDebugEnv)
+  : config.debug === true || on(config.debug && config.debug.vgs);
 
 module.exports = {
   config,
@@ -20,6 +28,7 @@ module.exports = {
   HANDSHAKE: Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n',
   NL: (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n',
   PUSH_DEBUG: !!(process.env.PUSH_DEBUG || (config && config.debug && config.debug.push)),
+  VGS_DEBUG: vgsDebug,
   MIN_POLL_INTERVAL_MS: num('MIN_POLL_INTERVAL_MS', 400),
   MIN_GAP_MS: num('MIN_GAP_MS', 120),
   PUSH_FRESH_MS: num('PUSH_FRESH_MS', 10000),
@@ -42,6 +51,7 @@ module.exports = {
 
   VGS_CACHE: new Map(),
   VGS_INFLIGHT: new Map(),
+  VGS_STATS: { since: Date.now(), counts: {} },   // /status/vgs answers by "<cache-state>/<source>"
   AWAITERS: new Map(),
   VGS_WAIT_ORDER: [],
   AWAITERS_MAX_PER_KEY: num('AWAITERS_MAX_PER_KEY', 200),
