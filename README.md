@@ -235,6 +235,8 @@ All endpoints are `GET` unless noted.
 * `GET /logs?limit=200&format=txt` → plain text (newline‑separated)
 
   * default (no `format`): JSON `{ file, count, lines }`
+* `GET /logging/status` → `{ enabled, file, ring_size }`
+* `POST /logging/start` / `POST /logging/stop` → enable or disable writing to the log file
 
 ### Send raw command
 
@@ -308,7 +310,11 @@ Open `http://<pi>:3000/`:
   * `#` → detailed (adds `#` after the command token, e.g. `VGS# 2 20 7`)
 * **Wait/Collect**: optionally set `quietMs` and `maxMs` for `/send`
 * **Commands**: searchable table from `commands.csv`; click to copy into the input
-* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll, stop/start logging to file, view filtering
+* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll and view filtering
+* **File logging**: Start/Stop logging buttons with a status line showing whether logging is on and the log file path. Stopping only halts writes to the log file; the in‑memory buffer behind the Logs Tail keeps filling, so the live view still works.
+* **Footer**: shows a "Last updated" timestamp, taken from the modified time of `index.html`, so it reflects when the UI was last deployed to that host.
+
+> Log rotation is not handled by the app; the log file grows until something rotates it (e.g. `logrotate`).
 
 > The UI persists preferences (log limit/interval, auto‑scroll, selected server, modifier) in `localStorage`.
 
