@@ -52,6 +52,7 @@ module.exports = {
   VGS_CACHE: new Map(),
   VGS_INFLIGHT: new Map(),
   VGS_STATS: { since: Date.now(), counts: {} },   // /status/vgs answers by "<cache-state>/<source>"
+  LOAD_STATS: { since: Date.now(), counts: {} },  // GET /dim reads, same key format
   AWAITERS: new Map(),
   VGS_WAIT_ORDER: [],
   AWAITERS_MAX_PER_KEY: num('AWAITERS_MAX_PER_KEY', 200),

@@ -234,9 +234,10 @@ All endpoints are `GET` unless noted.
 
 * `POST /connect` → `{ serverIndex }`
 * `POST /disconnect`
-* `GET /status` → `{ connected: boolean, server?: { name, host, port }, vgs: { since, total, hits, hitRate, counts } }`
+* `GET /status` → `{ connected: boolean, server?: { name, host, port }, vgs: { since, total, hits, hitRate, counts }, load: { … } }`
 
   * `vgs` counts `/status/vgs` answers since the process started, without needing debug logging. `hits` are answers served from cache; `counts` breaks them down as `<cache-state>/<source>`, e.g. `cache-hit/push-state` or `stream/tcp:await`. It resets when the app restarts.
+  * `load` has the same shape for `GET /dim` reads (`POST /dim` is not counted). The source is the record that answered: `LO` means the level was pushed by a `VOL` report, `RLB`/`RGB` mean it came from a poll. So `cache-hit/LO` counts reads served from pushed levels, and `stream/RGB` counts reads that went to the controller (a read that shares another request's in‑flight poll counts as `stream` too).
 
 ### Commands & logs
 

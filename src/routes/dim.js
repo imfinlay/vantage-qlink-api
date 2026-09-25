@@ -49,6 +49,12 @@ function recordFor(key, raw, fallback = {}) {
   return record;
 }
 
+// Count GET /dim reads by "<cache-state>/<record source>" (LO = push-fed, RLB/RGB = poll-fed); shown on GET /status.
+function countRead(state, record) {
+  const k = `${state}/${(record && record.source) || 'unknown'}`;
+  ctx.LOAD_STATS.counts[k] = (ctx.LOAD_STATS.counts[k] || 0) + 1;
+}
+
 function sendErr(res, err, fallbackMessage) {
   const message = err?.message || fallbackMessage;
   const low = String(err?.message || '').toLowerCase();
@@ -175,12 +181,14 @@ router.get('/dim', async (req, res) => {
     const maxAge = ctx.LOAD_PUSH && cacheMsRaw !== 0 ? (ctx.LOAD_PUSH_MAX_AGE_MS || Infinity) : cacheMs;
     const cached = ctx.LOAD_CACHE.get(key);
     if (cached && (now - cached.ts) < maxAge) {
+      countRead('cache-hit', cached);
       return sendLoadResponse(res, format, cached, { cached: true });
     }
 
     if (ctx.LOAD_INFLIGHT.has(key)) {
       try {
         const inflight = await ctx.LOAD_INFLIGHT.get(key);
+        countRead('stream', inflight);
         return sendLoadResponse(res, format, inflight, { cached: false });
       } catch (_) {
         ctx.LOAD_INFLIGHT.delete(key);
@@ -201,6 +209,7 @@ router.get('/dim', async (req, res) => {
     } finally {
       ctx.LOAD_INFLIGHT.delete(key);
     }
+    countRead('stream', out);
     return sendLoadResponse(res, format, out, { cached: false });
   } catch (err) {
     logLine(`Load status error: ${err?.message || String(err)}`);
