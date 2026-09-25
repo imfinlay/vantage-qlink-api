@@ -82,6 +82,8 @@ npm install
 
 Configuration lives in `config.js` (a sample is checked into the repo).
 
+The numeric timing/limit settings (`MIN_GAP_MS`, `MIN_POLL_INTERVAL_MS`, `PUSH_FRESH_MS`, `HANDSHAKE_RETRY_MS`, `LOG_RING_MAX`, `DEFAULT_LOAD_FADE_SECONDS`, `AWAITERS_MAX_PER_KEY`, `LOAD_AWAITERS_MAX_PER_KEY`), `LOG_FILE_PATH` and `LOG_ENABLED` can also be set as environment variables (e.g. in the PM2 `env` block). **The environment variable wins over `config.js`**, which wins over the built‑in default; an empty variable counts as unset. `HANDSHAKE`, `LINE_ENDING` and `HB_WHITELIST_STRICT` are read from `config.js` only.
+
 **Servers** (multiple supported):
 
 ```js
