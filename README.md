@@ -378,6 +378,8 @@ Using the community **HTTP‑SWITCH** plugin:
 }
 ```
 
+**Note on `cacheMs`:** the server treats the `cacheMs` in `statusUrl` as a minimum request, not the final value. It is raised to at least `MIN_POLL_INTERVAL_MS` (from `config.js` or the environment), so a `cacheMs=800` here still gets a longer cache if that setting is higher. Tune polling load with `MIN_POLL_INTERVAL_MS` rather than editing every accessory. Set `cacheMs=0` to bypass it.
+
 For "one shot" or momentary buttons (i.e. where it's not on or off, but just a single push to execute a switch function) you can use the **HTTP-DUMMY** Homebridge plugin.
 
 ### Dimmable loads (homebridge-http-lightbulb)
@@ -432,7 +434,7 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 
 * The top-level `statusPattern` treats any value above `0` as `true` so HomeKit reports the load as Off when the level is zero.
 * Both status URLs use `format=level` so the body is a plain `0-100` string.
-* `cacheMs` lets the server satisfy polls from its cache briefly.
+* `cacheMs` lets the server satisfy polls from its cache briefly (with `LOAD_PUSH` on it is ignored for loads; see "Push updates for loads").
 * `quietMs`/`maxMs` tune when a status response is considered complete.
 * Use `pullInterval` ≥ **3.5s** and add **jitter** to avoid alignment across many accessories.
 
