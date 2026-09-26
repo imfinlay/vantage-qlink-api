@@ -23,7 +23,7 @@ module.exports = {
   // --- dimming defaults ---
   DEFAULT_LOAD_FADE_SECONDS: 3,
   LOAD_AWAITERS_MAX_PER_KEY: 200,
-  LOAD_PUSH: false,            // true = trust cached load levels kept current by VOL "LO" reports; only enable once LO lines show in the logs
+  LOAD_PUSH: true,             // trust cached load levels kept current by VOL "LO" reports (needs VOL 1 on the controller; the built-in default is false)
   LOAD_PUSH_MAX_AGE_MS: 600000, // with LOAD_PUSH, re-poll a load not updated for this long (0 = never)
 
   // --- whitelist discovery (username-free) ---

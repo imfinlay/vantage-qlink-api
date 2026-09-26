@@ -107,7 +107,7 @@ module.exports = {
   // File logging at startup (default true). The LOG_ENABLED env var overrides this.
   LOG_ENABLED: true,
   LOAD_AWAITERS_MAX_PER_KEY: 200, // concurrent awaiters allowed per load key
-  LOAD_PUSH: false,             // true: trust cached load levels kept current by VOL reports (see "Load dimming")
+  LOAD_PUSH: true,              // trust cached load levels kept current by VOL reports; needs VOL 1 on the controller (built-in default: false; see "Load dimming")
   LOAD_PUSH_MAX_AGE_MS: 600000, // with LOAD_PUSH, re-poll a load not updated for this long (0 = never)
 
   // Whitelist behavior (derived from Homebridge config)
@@ -313,13 +313,13 @@ Both endpoints attach `X-Load-Command` with the dispatched line plus headers (`X
 
 The controller can announce every load change on its own once load reporting is enabled with the V‑command `VOL 1` (send it from the web UI; the manual says it persists across a controller reset, and if it does not, add `VOL 1` to `HANDSHAKE`). Each change arrives as `LO <master> <enclosure> <module> <load> <level>`, where the level is the **target** (a fade produces one line, not a stream). The app always parses these into its load cache.
 
-By default `GET /dim` still uses each request's `cacheMs`. Set `LOAD_PUSH: true` (or the `LOAD_PUSH=1` environment variable) to make it trust the cache instead:
+Without `LOAD_PUSH` (the built‑in default, so a setup that has not enabled `VOL` behaves as before), `GET /dim` uses each request's `cacheMs`. The sample `config.js` sets `LOAD_PUSH: true` (or use the `LOAD_PUSH=1` environment variable), which makes it trust the cache instead:
 
 * A load is polled once, the first time it is read; after that its cached level stays current from `LO` reports, and `cacheMs` is ignored. `cacheMs=0` still forces a fresh read.
 * **Safety net:** if reports ever stop (for example `VOL` gets switched off), a load not updated for `LOAD_PUSH_MAX_AGE_MS` (default 10 minutes, `0` = never) is polled again.
 * The load cache is cleared whenever the TCP connection drops or is reconnected, so a change missed while disconnected cannot leave a stale level.
 
-Only turn `LOAD_PUSH` on once you have seen `LO` lines in the logs.
+`LOAD_PUSH` only makes sense once `VOL 1` is enabled and you have seen `LO` lines in the logs; if you have not enabled `VOL`, set `LOAD_PUSH: false`, otherwise levels can be up to `LOAD_PUSH_MAX_AGE_MS` out of date.
 
 ### Receive buffer (debug)
 
