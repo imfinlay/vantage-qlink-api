@@ -5,6 +5,7 @@ const ctx = require('../core/context');
 const { logLine } = require('../core/logger');
 const { runQueued, sleep } = require('../core/queue');
 const { sendCmdLogged } = require('../core/tcp');
+const { keyOf, vgsKey } = require('../core/parsing');
 
 function clientIp(req){
   try { const xf = req.headers['x-forwarded-for']; if (xf) return String(xf).split(',')[0].trim(); } catch (_) {}
@@ -12,14 +13,16 @@ function clientIp(req){
 }
 function logHttp(req, msg){ try { logLine(`HTTP ${req.method} ${req.path} from ${clientIp(req)} -> ${msg}`); } catch (_) {} }
 
-router.get('/test/vsw', async (req, res) => {
+// Shared by GET (params in the query string) and POST (params in the JSON body).
+async function vsw(req, res) {
   try {
     if (!ctx.tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
-    const m = parseInt(req.query.m, 10) || 2;
-    const s = parseInt(req.query.s, 10) || 20;
-    const b = parseInt(req.query.b, 10) || 7;
-    const state = (req.query.state != null) ? String(req.query.state) : '1';
-    const waitMs = Number(req.query.waitMs || 800);
+    const p = req.method === 'GET' ? req.query : (req.body || {});
+    const m = parseInt(p.m, 10) || 2;
+    const s = parseInt(p.s, 10) || 20;
+    const b = parseInt(p.b, 10) || 7;
+    const state = (p.state != null) ? String(p.state) : '1';
+    const waitMs = Number(p.waitMs || 800);
     const cmd = `VSW ${m} ${s} ${b} ${state}`;
 
     logHttp(req, cmd);
@@ -27,6 +30,10 @@ router.get('/test/vsw', async (req, res) => {
     const buf = await runQueued(async () => {
       const startLen = ctx.RECV_BUFFER.length;
       await sendCmdLogged(cmd);
+      // The switch is changing: drop what we cached for it so the next status read polls the
+      // controller instead of serving the pre-command state (a later push/poll repopulates it).
+      ctx.VGS_CACHE.delete(vgsKey(m, s, b));
+      ctx.STATE.delete(keyOf(m, s, b));
       if (waitMs > 0) { await sleep(waitMs); return ctx.RECV_BUFFER.slice(startLen); }
       return Buffer.alloc(0);
     }, { priority: 10, label: cmd });
@@ -37,34 +44,8 @@ router.get('/test/vsw', async (req, res) => {
     logLine(`VSW test error: ${err.message}`);
     return res.status(500).json({ ok:false, message: 'VSW test failed.' });
   }
-});
+}
 
-router.post('/test/vsw', async (req, res) => {
-  try {
-    if (!ctx.tcpClient) { logHttp(req, 'VSW attempt while not connected'); return res.status(400).json({ ok:false, message: 'Not connected.' }); }
-    const body = req.body || {};
-    const m = parseInt(body.m, 10) || 2;
-    const s = parseInt(body.s, 10) || 20;
-    const b = parseInt(body.b, 10) || 7;
-    const state = (body.state != null) ? String(body.state) : '1';
-    const waitMs = Number(body.waitMs || 800);
-    const cmd = `VSW ${m} ${s} ${b} ${state}`;
-
-    logHttp(req, cmd);
-
-    const buf = await runQueued(async () => {
-      const startLen = ctx.RECV_BUFFER.length;
-      await sendCmdLogged(cmd);
-      if (waitMs > 0) { await sleep(waitMs); return ctx.RECV_BUFFER.slice(startLen); }
-      return Buffer.alloc(0);
-    }, { priority: 10, label: cmd });
-
-    const response = (waitMs > 0) ? { bytes: buf.length, text: buf.toString('utf8') } : null;
-    return res.json({ ok:true, sent: cmd, response });
-  } catch (err) {
-    logLine(`VSW test error: ${err.message}`);
-    return res.status(500).json({ ok:false, message: 'VSW test failed.' });
-  }
-});
+router.route('/test/vsw').get(vsw).post(vsw);
 
 module.exports = router;

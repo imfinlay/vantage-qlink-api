@@ -28,15 +28,13 @@ function sendVGSWithAwaiter(m, s, b, cmd, maxMs) {
         const key = `${m}-${s}-${b}`;
         const p = awaitVGS(m, s, b, maxMs);
         ctx.VGS_WAIT_ORDER.push(key);
+        // Attach handlers before sending: if the send fails, the awaiter's later
+        // timeout must still be handled (and its wait-order entry removed).
+        p.finally(() => {
+          const idx = ctx.VGS_WAIT_ORDER.indexOf(key);
+          if (idx !== -1) ctx.VGS_WAIT_ORDER.splice(idx, 1);
+        }).then(resolve, reject);
         await sendCmdLogged(cmd);
-        p.then((raw) => {
-          try { const idx = ctx.VGS_WAIT_ORDER.indexOf(key); if (idx !== -1) ctx.VGS_WAIT_ORDER.splice(idx, 1); } catch (_) {}
-          resolve(raw);
-        }).catch((err) => {
-          try { const idx = ctx.VGS_WAIT_ORDER.indexOf(key); if (idx !== -1) ctx.VGS_WAIT_ORDER.splice(idx, 1); } catch (_) {}
-          reject(err);
-        });
-        return;
       } catch (e) { reject(e); }
     }, { priority: 0, label: cmd });
   });

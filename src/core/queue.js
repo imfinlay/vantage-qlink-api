@@ -27,7 +27,7 @@ async function pumpQueue() {
 
 function runQueued(taskFn, { priority = 0, label = '' } = {}) {
   return new Promise((resolve, reject) => {
-    const item = { fn: taskFn, priority, resolve, reject, label, enqueuedAt: Date.now() };
+    const item = { fn: taskFn, priority, resolve, reject, label };
     const idx = ctx.__queue.findIndex(x => (x.priority || 0) < priority);
     if (idx === -1) ctx.__queue.push(item); else ctx.__queue.splice(idx, 0, item);
     pumpQueue();

@@ -1,50 +1,41 @@
 'use strict';
 const path = require('path');
 let config = {};
-try { config = require('../../config'); }           // project root config.js
-catch (e1) {
-  try { config = require('../config'); }            // src/config.js shim
-  catch (e2) { config = {}; }
-}
+try { config = require('../../config'); } catch (_) {}  // project root config.js
 
-const toNumberOr = (value, fallback) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
+// Environment variable wins over config.js, which wins over the default.
+// An empty env var counts as unset.
+const pick = (key, fallback) => {
+  const env = process.env[key];
+  return env !== undefined && env !== '' ? env : (config[key] ?? fallback);
 };
+const num = (key, fallback) => {
+  const n = Number(pick(key, fallback));
+  return Number.isFinite(n) ? n : fallback;
+};
+const on = (v) => v != null && !['', '0', 'false'].includes(String(v).toLowerCase());
 
-const defaultLoadFadeSeconds = (() => {
-  if (process.env.DEFAULT_LOAD_FADE_SECONDS != null) {
-    return toNumberOr(process.env.DEFAULT_LOAD_FADE_SECONDS, 3);
-  }
-  if (config && Object.prototype.hasOwnProperty.call(config, 'DEFAULT_LOAD_FADE_SECONDS')) {
-    return toNumberOr(config.DEFAULT_LOAD_FADE_SECONDS, 3);
-  }
-  return 3;
-})();
-
-const loadAwaitersMax = (() => {
-  if (process.env.LOAD_AWAITERS_MAX_PER_KEY != null) {
-    return toNumberOr(process.env.LOAD_AWAITERS_MAX_PER_KEY, 200);
-  }
-  if (config && Object.prototype.hasOwnProperty.call(config, 'LOAD_AWAITERS_MAX_PER_KEY')) {
-    return toNumberOr(config.LOAD_AWAITERS_MAX_PER_KEY, 200);
-  }
-  return 200;
-})();
+// Log a "VGS RESP" line per /status/vgs answer. Env VGS_DEBUG wins; otherwise config
+// `debug: true` (legacy) or `debug: { vgs: true }`.
+const vgsDebugEnv = process.env.VGS_DEBUG;
+const vgsDebug = vgsDebugEnv !== undefined && vgsDebugEnv !== ''
+  ? on(vgsDebugEnv)
+  : config.debug === true || on(config.debug && config.debug.vgs);
 
 module.exports = {
   config,
-  LOG_FILE_PATH: (config.LOG_FILE_PATH) || path.join(__dirname, '..', 'app.log'),
+  LOG_FILE_PATH: pick('LOG_FILE_PATH', path.join(__dirname, '..', 'app.log')),
   HANDSHAKE: Object.prototype.hasOwnProperty.call(config, 'HANDSHAKE') ? config.HANDSHAKE : 'VCL 1 0\r\n',
   NL: (typeof config.LINE_ENDING === 'string') ? config.LINE_ENDING : '\r\n',
   PUSH_DEBUG: !!(process.env.PUSH_DEBUG || (config && config.debug && config.debug.push)),
-  MIN_POLL_INTERVAL_MS: Number(config.MIN_POLL_INTERVAL_MS || process.env.MIN_POLL_INTERVAL_MS || 400),
-  MIN_GAP_MS: Number(config.MIN_GAP_MS || process.env.MIN_GAP_MS || 120),
-  PUSH_FRESH_MS: Number(config.PUSH_FRESH_MS || process.env.PUSH_FRESH_MS || 10000),
+  VGS_DEBUG: vgsDebug,
+  MIN_POLL_INTERVAL_MS: num('MIN_POLL_INTERVAL_MS', 400),
+  MIN_GAP_MS: num('MIN_GAP_MS', 120),
+  PUSH_FRESH_MS: num('PUSH_FRESH_MS', 10000),
   HB_WHITELIST_STRICT: (config && Object.prototype.hasOwnProperty.call(config, 'HB_WHITELIST_STRICT')) ? !!config.HB_WHITELIST_STRICT : true,
-  HANDSHAKE_RETRY_MS: Number(config.HANDSHAKE_RETRY_MS || process.env.HANDSHAKE_RETRY_MS || 0),
-  LOG_RING_MAX: Number(process.env.LOG_RING_MAX || (config && config.LOG_RING_MAX) || 2000),
-  DEFAULT_LOAD_FADE_SECONDS: defaultLoadFadeSeconds,
+  HANDSHAKE_RETRY_MS: num('HANDSHAKE_RETRY_MS', 0),
+  LOG_RING_MAX: num('LOG_RING_MAX', 2000),
+  DEFAULT_LOAD_FADE_SECONDS: num('DEFAULT_LOAD_FADE_SECONDS', 3),
 
   app: null,
   httpServer: null,
@@ -54,22 +45,26 @@ module.exports = {
 
   LOG_RING: [],
   _logStream: null,
-  _logBusy: false,
-  _logQueue: [],
   __queue: [],
   __pumping: false,
   __lastSendAt: 0,
 
   VGS_CACHE: new Map(),
   VGS_INFLIGHT: new Map(),
+  VGS_STATS: { since: Date.now(), counts: {} },   // /status/vgs answers by "<cache-state>/<source>"
+  LOAD_STATS: { since: Date.now(), counts: {} },  // GET /dim reads, same key format
   AWAITERS: new Map(),
   VGS_WAIT_ORDER: [],
-  AWAITERS_MAX_PER_KEY: Number(config.AWAITERS_MAX_PER_KEY || process.env.AWAITERS_MAX_PER_KEY || 200),
+  AWAITERS_MAX_PER_KEY: num('AWAITERS_MAX_PER_KEY', 200),
 
   LOAD_CACHE: new Map(),
   LOAD_INFLIGHT: new Map(),
   LOAD_AWAITERS: new Map(),
-  LOAD_AWAITERS_MAX_PER_KEY: loadAwaitersMax,
+  LOAD_AWAITERS_MAX_PER_KEY: num('LOAD_AWAITERS_MAX_PER_KEY', 200),
+  // Trust cached load levels (kept current by "VOL 1" LO reports) instead of the request's cacheMs.
+  LOAD_PUSH: on(pick('LOAD_PUSH', false)),
+  // Safety net for LOAD_PUSH: re-poll an entry older than this (ms) in case reports stopped. 0 = never.
+  LOAD_PUSH_MAX_AGE_MS: num('LOAD_PUSH_MAX_AGE_MS', 600000),
 
   HB_CONFIG_PATH: null,
   WHITELIST: new Set(),

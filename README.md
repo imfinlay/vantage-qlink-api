@@ -82,6 +82,8 @@ npm install
 
 Configuration lives in `config.js` (a sample is checked into the repo).
 
+The numeric timing/limit settings (`MIN_GAP_MS`, `MIN_POLL_INTERVAL_MS`, `PUSH_FRESH_MS`, `HANDSHAKE_RETRY_MS`, `LOG_RING_MAX`, `DEFAULT_LOAD_FADE_SECONDS`, `AWAITERS_MAX_PER_KEY`, `LOAD_AWAITERS_MAX_PER_KEY`, `LOAD_PUSH_MAX_AGE_MS`), `LOAD_PUSH`, `LOG_FILE_PATH` and `LOG_ENABLED` can also be set as environment variables (e.g. in the PM2 `env` block). **The environment variable wins over `config.js`**, which wins over the built‑in default; an empty variable counts as unset. `HANDSHAKE`, `LINE_ENDING` and `HB_WHITELIST_STRICT` are read from `config.js` only. The `PUBLIC_DIR` environment variable (environment only) changes the directory the web UI is served from (default: the repo's `public/`).
+
 **Servers** (multiple supported):
 
 ```js
@@ -94,13 +96,19 @@ module.exports = {
 
   // Timing & behavior
   MIN_GAP_MS: 120,          // global on‑wire gap between sends
+  MIN_POLL_INTERVAL_MS: 6000, // minimum cache lifetime for /status/vgs (a floor under each request's cacheMs)
   PUSH_FRESH_MS: 10000,     // how long push‑confirmed state satisfies /status/vgs
   HANDSHAKE: 'VCL 1 0\r\n', // Optional, set CRLF at startup
   HANDSHAKE_RETRY_MS: 0,    // retry handshake once after N ms (0 = disabled)
 
   // Direct load dimming
   DEFAULT_LOAD_FADE_SECONDS: 3, // fallback fade when /dim POST omits fade
+
+  // File logging at startup (default true). The LOG_ENABLED env var overrides this.
+  LOG_ENABLED: true,
   LOAD_AWAITERS_MAX_PER_KEY: 200, // concurrent awaiters allowed per load key
+  LOAD_PUSH: true,              // trust cached load levels kept current by VOL reports; needs VOL 1 on the controller (built-in default: false; see "Load dimming")
+  LOAD_PUSH_MAX_AGE_MS: 600000, // with LOAD_PUSH, re-poll a load not updated for this long (0 = never)
 
   // Whitelist behavior (derived from Homebridge config)
   HB_WHITELIST_STRICT: true // true: empty whitelist denies all; false: allow all when empty
@@ -123,7 +131,7 @@ module.exports = {
 
 ### Debug logging
 
-- Set `debug: true` in `config.js` to enable verbose `VGS RESP …` entries for switch polls. This shows whether a response came from the cache or from the Vantage, which is useful to identify whether you have set the cache timeout (either globally or per device) high enough relative to the load on your system. For example:
+- Set `debug: { vgs: true }` in `config.js` (or the `VGS_DEBUG=1` environment variable, which wins; the older `debug: true` also still works) to log a `VGS RESP …` line for every `/status/vgs` answer. It can sit alongside `debug: { push: true }`. This shows whether each response came from the cache (`cache-hit`, with `push-state` or `tcp:…` as the source) or from a live read of the Vantage (`stream`), and `cache-stale` when a failed poll fell back to an old value. That is useful to judge whether the cache time is set high enough for your load. Every poll is logged, so switch it on for a diagnostic session rather than leaving it on. For example:
 
   [2025-10-27T01:21:29.190Z] CMD/API -> VGS# 1 9 23
   [2025-10-27T01:21:29.234Z] RX <- RGS# 1 9 23 0
@@ -226,7 +234,10 @@ All endpoints are `GET` unless noted.
 
 * `POST /connect` → `{ serverIndex }`
 * `POST /disconnect`
-* `GET /status` → `{ connected: boolean, server?: { name, host, port } }`
+* `GET /status` → `{ connected: boolean, server?: { name, host, port }, vgs: { since, total, hits, hitRate, counts }, load: { … } }`
+
+  * `vgs` counts `/status/vgs` answers since the process started, without needing debug logging. `hits` are answers served from cache; `counts` breaks them down as `<cache-state>/<source>`, e.g. `cache-hit/push-state` or `stream/tcp:await`. It resets when the app restarts.
+  * `load` has the same shape for `GET /dim` reads (`POST /dim` is not counted). The source is the record that answered: `LO` means the level was pushed by a `VOL` report, `RLB`/`RGB` mean it came from a poll. So `cache-hit/LO` counts reads served from pushed levels, and `stream/RGB` counts reads that went to the controller (a read that shares another request's in‑flight poll counts as `stream` too).
 
 ### Commands & logs
 
@@ -235,6 +246,8 @@ All endpoints are `GET` unless noted.
 * `GET /logs?limit=200&format=txt` → plain text (newline‑separated)
 
   * default (no `format`): JSON `{ file, count, lines }`
+* `GET /logging/status` → `{ enabled, file, ring_size }`
+* `POST /logging/start` / `POST /logging/stop` → enable or disable writing to the log file
 
 ### Send raw command
 
@@ -254,7 +267,7 @@ All endpoints are `GET` unless noted.
 
   * `format=raw` → `"0"` or `"1"` (plain text)
   * `format=bool` → `"true"` or `"false"`
-  * default JSON: `{ ok, sent, state, raw, bytes, cached }`
+  * default JSON: `{ ok, value, raw }` (`value` is `1`/`0`)
 
 **Protocol details**
 
@@ -263,6 +276,10 @@ All endpoints are `GET` unless noted.
 * The **last field** is treated as the boolean state (non‑zero = `1`)
 
 ### Load dimming (direct load control)
+
+> **Use the load's own address.** `m`, `e`, `module` and `load` must identify the load itself, not a "switch pointer", scene button or any other button that only triggers something which then changes the load. A switch's state says what the button is set to, not what the load is doing, and the controller's load reports (below) are keyed by the load address. To find it, change the load and read the `LO <master> <enclosure> <module> <load> <level>` line in the logs; those four numbers are what `/dim` takes.
+
+> **Not supported: station-bus dimmers.** Only enclosure module loads (addressed by master, enclosure, module and load) can be read and set. Loads that live on the station bus, such as wall-box dimmers, low-voltage relay stations and 0–12 V loads, use different Vantage commands (`VGC`/`VLC`, reported as `LS` lines) that this API does not implement.
 
 * `POST /dim` (JSON)
 
@@ -292,6 +309,18 @@ All endpoints are `GET` unless noted.
 
 Both endpoints attach `X-Load-Command` with the dispatched line plus headers (`X-Load-Level`, `X-Load-Fade`, `X-Load-Source`) for quick introspection.
 
+#### Push updates for loads (optional)
+
+The controller can announce every load change on its own once load reporting is enabled with the V‑command `VOL 1` (send it from the web UI; the manual says it persists across a controller reset, and if it does not, add `VOL 1` to `HANDSHAKE`). Each change arrives as `LO <master> <enclosure> <module> <load> <level>`, where the level is the **target** (a fade produces one line, not a stream). The app always parses these into its load cache.
+
+Without `LOAD_PUSH` (the built‑in default, so a setup that has not enabled `VOL` behaves as before), `GET /dim` uses each request's `cacheMs`. The sample `config.js` sets `LOAD_PUSH: true` (or use the `LOAD_PUSH=1` environment variable), which makes it trust the cache instead:
+
+* A load is polled once, the first time it is read; after that its cached level stays current from `LO` reports, and `cacheMs` is ignored. `cacheMs=0` still forces a fresh read.
+* **Safety net:** if reports ever stop (for example `VOL` gets switched off), a load not updated for `LOAD_PUSH_MAX_AGE_MS` (default 10 minutes, `0` = never) is polled again.
+* The load cache is cleared whenever the TCP connection drops or is reconnected, so a change missed while disconnected cannot leave a stale level.
+
+`LOAD_PUSH` only makes sense once `VOL 1` is enabled and you have seen `LO` lines in the logs; if you have not enabled `VOL`, set `LOAD_PUSH: false`, otherwise levels can be up to `LOAD_PUSH_MAX_AGE_MS` out of date.
+
 ### Receive buffer (debug)
 
 * `GET /recv?format=utf8|hex|base64&start=&end=`
@@ -308,7 +337,11 @@ Open `http://<pi>:3000/`:
   * `#` → detailed (adds `#` after the command token, e.g. `VGS# 2 20 7`)
 * **Wait/Collect**: optionally set `quietMs` and `maxMs` for `/send`
 * **Commands**: searchable table from `commands.csv`; click to copy into the input
-* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll, stop/start logging to file, view filtering
+* **Logs Tail**: live log viewer with adjustable interval; supports auto‑scroll and view filtering
+* **File logging**: Start/Stop logging buttons with a status line showing whether logging is on and the log file path. Stopping only halts writes to the log file; the in‑memory buffer behind the Logs Tail keeps filling, so the live view still works. The buttons only affect the running process: after a restart, logging returns to the startup default (on unless `LOG_ENABLED` is `false`/`0` in `config.js` or the environment; the environment wins).
+* **Footer**: shows a "Last updated" timestamp, taken from the modified time of `index.html`, so it reflects when the UI was last deployed to that host.
+
+> Log rotation is not handled by the app; the log file grows until something rotates it (e.g. `logrotate`).
 
 > The UI persists preferences (log limit/interval, auto‑scroll, selected server, modifier) in `localStorage`.
 
@@ -346,9 +379,13 @@ Using the community **HTTP‑SWITCH** plugin:
 }
 ```
 
+**Note on `cacheMs`:** the server treats the `cacheMs` in `statusUrl` as a minimum request, not the final value. It is raised to at least `MIN_POLL_INTERVAL_MS` (from `config.js` or the environment), so a `cacheMs=800` here still gets a longer cache if that setting is higher. Tune polling load with `MIN_POLL_INTERVAL_MS` rather than editing every accessory. Set `cacheMs=0` to bypass it.
+
 For "one shot" or momentary buttons (i.e. where it's not on or off, but just a single push to execute a switch function) you can use the **HTTP-DUMMY** Homebridge plugin.
 
 ### Dimmable loads (homebridge-http-lightbulb)
+
+Use the load's own address for each dimmer accessory (see the note under "Load dimming"), not the switch or scene button that operates it.
 
 The `/dim` endpoints expose load-level control. Configure the plugin so brightness writes `POST /dim` with JSON containing your load address and the desired level (0‑100), and poll `GET /dim` for status. Example using [homebridge-http-lightbulb](https://github.com/Supereg/homebridge-http-lightbulb):
 
@@ -398,7 +435,7 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 
 * The top-level `statusPattern` treats any value above `0` as `true` so HomeKit reports the load as Off when the level is zero.
 * Both status URLs use `format=level` so the body is a plain `0-100` string.
-* `cacheMs` lets the server satisfy polls from its cache briefly.
+* `cacheMs` lets the server satisfy polls from its cache briefly (with `LOAD_PUSH` on it is ignored for loads; see "Push updates for loads").
 * `quietMs`/`maxMs` tune when a status response is considered complete.
 * Use `pullInterval` ≥ **3.5s** and add **jitter** to avoid alignment across many accessories.
 
@@ -414,7 +451,7 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
   | `format`   | –         | Response shape: `json` (default), `bool`, or `raw`                         |
   | `quietMs`  | –         | Optional wait hint (currently parsed but unused)                           |
   | `maxMs`    | –         | Deadline for awaiting the TCP reply (falls back to 1200 ms)                |
-  | `cacheMs`  | –         | Cache freshness window in milliseconds (default `MIN_POLL_INTERVAL_MS`)    |
+  | `cacheMs`  | –         | Cache freshness window in ms. Omitted or below `MIN_POLL_INTERVAL_MS` → raised to it; `0` forces a fresh read |
   | `jitterMs` | –         | Optional random delay before polling (default 0)                           |
 
 - **POST `/dim`**
@@ -447,6 +484,9 @@ Replace `%s` (or `{{BRIGHTNESS}}` if your plugin uses handlebars-style templatin
 * **Coalescing**: multiple concurrent `/status/vgs` for the same (m,s,b) share one on‑wire request
 * **Push + confirm**: on receiving a `VOS` `SW m s b v`, the app does a single `VGS#` confirm and updates the cache
 * **`PUSH_FRESH_MS`**: window where push‑confirmed state can short‑circuit `/status/vgs`
+* **`MIN_POLL_INTERVAL_MS`**: floor for `/status/vgs` cache lifetime. Whatever `cacheMs` an accessory sends is raised to at least this, so you can tune polling load in one place (env var or `config.js`) instead of editing every Homebridge accessory. Pass `cacheMs=0` to force a fresh read. (`GET /dim` only uses it as its default.)
+* **`LOAD_PUSH`**: when on, `GET /dim` serves cached load levels (kept current by `LO` reports) instead of honouring `cacheMs`; `LOAD_PUSH_MAX_AGE_MS` re‑polls a load that has gone quiet
+* **Writes drop cached state**: sending a command through `/test/vsw` discards that switch's cached state, so the next `/status/vgs` polls the controller instead of returning the pre‑command value
 * **Whitelist**: built from Homebridge config; `HB_WHITELIST_STRICT: true` means empty → deny all
 
 ## Utility scripts
@@ -507,6 +547,7 @@ Notes:
 * Server‑Sent Events / WebSocket log streaming (replace polling)
 * Optional per‑key rate limits / circuit breaker when a device flaps
 * Built‑in health endpoint with queue depth and awaiter counts
+* Auto‑reconnect when the TCP connection to the controller drops (`AUTO_CONNECT_RETRY_MS` currently only retries a failed initial connect)
 
 ## License
 

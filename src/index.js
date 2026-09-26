@@ -5,9 +5,8 @@ const http = require('http');
 const app = require('./app');
 const ctx = require('./core/context');
 const { logLine } = require('./core/logger');
-const config = require('./config');
-// new: tcp helpers
-const { connectToServer, getTcpClient } = require('./core/tcp');
+const { connectToServer } = require('./core/tcp');
+const config = ctx.config;
 
 const PORT = Number(process.env.PORT || ctx.config?.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -47,8 +46,8 @@ try {
         logLine(`[auto] no server at index ${IDX}; skipping auto-connect`);
         return;
       }
-      if (typeof getTcpClient === 'function' && getTcpClient()) {
-        // already connected or connecting
+      if (ctx.tcpClient) {
+        // e.g. connected manually from the UI while a retry was pending
         logLine('[index.js] already connected; skipping auto-connect');
         return;
       }
@@ -66,31 +65,17 @@ try {
 
     // initial attempt
     tryConnect('startup');
-
-    // optional: reconnect after server close
-    const onMaybeReconnect = () => {
-      if (AUTO && RETRY_MS > 0) {
-        setTimeout(() => tryConnect('reconnect'), Math.max(500, RETRY_MS));
-      }
-    };
-    // attach once per process
-    server.on('close', onMaybeReconnect);
   }
 } catch (e) {
   try { logLine(`[index.js] auto-connect setup error: ${e.message}`); } catch (_) {}
 }
 // --- end auto-connect ---
 
-process.on('SIGINT', () => {
-  try { logLine('SIGINT received, shutting down'); } catch (_) {}
-  try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
-  try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  try { logLine('SIGTERM received, shutting down'); } catch (_) {}
-  try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
-  try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
-  process.exit(0);
-});
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try { logLine(`${sig} received, shutting down`); } catch (_) {}
+    try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
+    try { const { ensureDisconnected } = require('./core/tcp'); ensureDisconnected(); } catch (_) {}
+    process.exit(0);
+  });
+}

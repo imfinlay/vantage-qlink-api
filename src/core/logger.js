@@ -3,32 +3,26 @@ const fs = require('fs');
 const path = require('path');
 const ctx = require('./context');
 
-// default to enabled unless explicitly disabled by env/config
-if (typeof ctx.LOG_ENABLED !== 'boolean') {
-  ctx.LOG_ENABLED = (process.env.LOG_ENABLED === '0' || process.env.LOG_ENABLED === 'false') ? false : true;
-}
+// File logging is on unless LOG_ENABLED is 0/false in the environment or config.js (env wins).
+ctx.LOG_ENABLED = !['0', 'false'].includes(String(process.env.LOG_ENABLED ?? ctx.config.LOG_ENABLED).toLowerCase());
 
 try { fs.mkdirSync(path.dirname(ctx.LOG_FILE_PATH), { recursive: true }); } catch (_) {}
 
+// Set after a stream error so a bad log path is reported once instead of
+// reopening (and failing) on every logLine. enableLogging() clears it.
+let openFailed = false;
+
 function _openLogStream() {
-  if (!ctx.LOG_ENABLED) return; // don't open if disabled
+  if (!ctx.LOG_ENABLED || ctx._logStream || openFailed) return;
   try {
-    if (ctx._logStream) return;
-    ctx._logStream = fs.createWriteStream(ctx.LOG_FILE_PATH, { flags: 'a' });
-    ctx._logStream.on('drain', () => {
-      ctx._logBusy = false;
-      try {
-        while (ctx._logQueue.length && !ctx._logBusy && ctx.LOG_ENABLED) {
-          const s = ctx._logQueue.shift();
-          ctx._logBusy = !ctx._logStream.write(s);
-        }
-      } catch (_) {}
-    });
-    ctx._logStream.on('error', (err) => {
+    const stream = fs.createWriteStream(ctx.LOG_FILE_PATH, { flags: 'a' });
+    stream.on('error', (err) => {
       try { console.error('[log] stream error:', err?.message || String(err)); } catch (_) {}
-      try { ctx._logStream.destroy(); } catch (_) {}
-      ctx._logStream = null;
+      openFailed = true;
+      try { stream.destroy(); } catch (_) {}
+      if (ctx._logStream === stream) ctx._logStream = null;
     });
+    ctx._logStream = stream;
   } catch (_) { ctx._logStream = null; }
 }
 
@@ -54,56 +48,32 @@ function logLine(msg) {
 
   if (!ctx.LOG_ENABLED) return; // disk logging disabled: skip file writes
 
+  // WriteStream buffers internally, so no manual backpressure queue is needed.
   try {
-    if (!ctx._logStream) _openLogStream();
-    if (ctx._logStream) {
-      if (!ctx._logBusy) ctx._logBusy = !ctx._logStream.write(line);
-      else ctx._logQueue.push(line);
-    } else {
-      fs.appendFile(ctx.LOG_FILE_PATH, line, () => {});
-    }
-  } catch (_) {
-    try { fs.appendFile(ctx.LOG_FILE_PATH, line, () => {}); } catch (_) {}
-  }
+    _openLogStream();
+    if (ctx._logStream) ctx._logStream.write(line);
+  } catch (_) {}
 }
 
-function tailFile(filePath, maxLines) {
-  const n = Math.max(1, Number(maxLines) || 1);
-
-  if (Array.isArray(ctx.LOG_RING) && ctx.LOG_RING.length) {
-    return ctx.LOG_RING.slice(-n);
-  }
-
-  if (!fs.existsSync(filePath)) return [];
-  try {
-    const text = fs.readFileSync(filePath, 'utf8');
-    const lines = text.split(/\r?\n/);
-    if (lines.length && lines[lines.length - 1] === '') lines.pop();
-    return lines.slice(-n);
-  } catch (_) { return []; }
+function tailFile(maxLines) {
+  return ctx.LOG_RING.slice(-Math.max(1, Number(maxLines) || 1));
 }
 
 function isLoggingEnabled() { return !!ctx.LOG_ENABLED; }
 
 function enableLogging() {
   ctx.LOG_ENABLED = true;
+  openFailed = false;
   _openLogStream();
   return true;
 }
 
 function disableLogging() {
   ctx.LOG_ENABLED = false;
-  try {
-    if (ctx._logStream) {
-      // Close the stream gracefully and drop any pending queue
-      try { ctx._logStream.end(); } catch (_) {}
-      try { ctx._logStream.destroy(); } catch (_) {}
-    }
-  } catch (_) {}
+  // end() flushes anything still buffered before closing
+  try { if (ctx._logStream) ctx._logStream.end(); } catch (_) {}
   ctx._logStream = null;
-  ctx._logBusy = false;
-  try { if (Array.isArray(ctx._logQueue)) ctx._logQueue.length = 0; } catch (_) {}
   return true;
 }
 
-module.exports = { logLine, tailFile, _openLogStream, isLoggingEnabled, enableLogging, disableLogging };
+module.exports = { logLine, tailFile, isLoggingEnabled, enableLogging, disableLogging };

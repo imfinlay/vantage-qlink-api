@@ -31,6 +31,7 @@ function ensureDisconnected() {
   ctx.tcpClient = null;
   ctx.connectedServer = null;
   resetRecv();
+  ctx.LOAD_CACHE.clear();   // LO reports missed while disconnected would leave stale levels
 
   try {
     for (const [, t] of ctx.PENDING) { try { clearTimeout(t); } catch (_) {} }

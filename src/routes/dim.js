@@ -31,6 +31,37 @@ function validateAddress(master, enclosure, modulePos, load) {
   return true;
 }
 
+// Reuse the record the RLB/RGB parser already cached; otherwise build one from the raw reply.
+function recordFor(key, raw, fallback = {}) {
+  let record = ctx.LOAD_CACHE.get(key);
+  if (!record) {
+    const rawStr = String(raw || '').trim();
+    const parsed = parseLoadLine(rawStr);
+    record = {
+      ts: Date.now(),
+      level: parsed ? parsed.level : (fallback.level ?? null),
+      fade: parsed ? parsed.fade : (fallback.fade ?? null),
+      raw: rawStr,
+      source: parsed ? parsed.type : null
+    };
+    ctx.LOAD_CACHE.set(key, record);
+  }
+  return record;
+}
+
+// Count GET /dim reads by "<cache-state>/<record source>" (LO = push-fed, RLB/RGB = poll-fed); shown on GET /status.
+function countRead(state, record) {
+  const k = `${state}/${(record && record.source) || 'unknown'}`;
+  ctx.LOAD_STATS.counts[k] = (ctx.LOAD_STATS.counts[k] || 0) + 1;
+}
+
+function sendErr(res, err, fallbackMessage) {
+  const message = err?.message || fallbackMessage;
+  const low = String(err?.message || '').toLowerCase();
+  const status = low.includes('timeout') ? 504 : low.includes('awaiters limit') ? 429 : 500;
+  return res.status(status).json({ ok: false, message });
+}
+
 function sendLoadResponse(res, format, record, { cached = false, extras = null } = {}) {
   if (cached) res.setHeader('X-Load-Cache', 'hit'); else res.setHeader('X-Load-Cache', 'miss');
   if (record && record.source) res.setHeader('X-Load-Source', record.source);
@@ -110,20 +141,7 @@ router.post('/dim', async (req, res) => {
     res.setHeader('X-Load-Command', cmd);
 
     const raw = await sendLoadWithAwaiter(master, enclosure, modulePos, load, cmd, maxMs);
-    let record = ctx.LOAD_CACHE.get(key);
-    if (!record) {
-      const rawStr = String(raw || '').trim();
-      const parsed = parseLoadLine(rawStr);
-      record = {
-        ts: Date.now(),
-        level: parsed ? parsed.level : level,
-        fade: parsed ? parsed.fade : fade,
-        raw: rawStr,
-        bytes: Buffer.byteLength(rawStr, 'utf8'),
-        source: parsed ? parsed.type : null
-      };
-      ctx.LOAD_CACHE.set(key, record);
-    }
+    const record = recordFor(key, raw, { level, fade });
 
     return sendLoadResponse(res, 'json', record, {
       cached: false,
@@ -134,16 +152,7 @@ router.post('/dim', async (req, res) => {
     });
   } catch (err) {
     logLine(`Dim command failed: ${err?.message || String(err)}`);
-    const message = err?.message || 'Failed to send dim command.';
-    if (err && typeof err.message === 'string') {
-      if (err.message.toLowerCase().includes('timeout')) {
-        return res.status(504).json({ ok: false, message });
-      }
-      if (err.message.toLowerCase().includes('awaiters limit')) {
-        return res.status(429).json({ ok: false, message });
-      }
-    }
-    return res.status(500).json({ ok: false, message });
+    return sendErr(res, err, 'Failed to send dim command.');
   }
 });
 
@@ -167,14 +176,19 @@ router.get('/dim', async (req, res) => {
     const key = loadKey(master, enclosure, modulePos, load);
     const now = Date.now();
 
+    // With LOAD_PUSH the cache is kept current by LO reports, so it stays valid until the
+    // safety-net age; an explicit cacheMs=0 still forces a fresh read.
+    const maxAge = ctx.LOAD_PUSH && cacheMsRaw !== 0 ? (ctx.LOAD_PUSH_MAX_AGE_MS || Infinity) : cacheMs;
     const cached = ctx.LOAD_CACHE.get(key);
-    if (cached && (now - cached.ts) < cacheMs) {
+    if (cached && (now - cached.ts) < maxAge) {
+      countRead('cache-hit', cached);
       return sendLoadResponse(res, format, cached, { cached: true });
     }
 
     if (ctx.LOAD_INFLIGHT.has(key)) {
       try {
         const inflight = await ctx.LOAD_INFLIGHT.get(key);
+        countRead('stream', inflight);
         return sendLoadResponse(res, format, inflight, { cached: false });
       } catch (_) {
         ctx.LOAD_INFLIGHT.delete(key);
@@ -185,21 +199,7 @@ router.get('/dim', async (req, res) => {
     res.setHeader('X-Load-Command', cmd);
     const pending = (async () => {
       const raw = await sendLoadWithAwaiter(master, enclosure, modulePos, load, cmd, maxMs);
-      let record = ctx.LOAD_CACHE.get(key);
-      if (!record) {
-        const rawStr = String(raw || '').trim();
-        const parsed = parseLoadLine(rawStr);
-        record = {
-          ts: Date.now(),
-          level: parsed ? parsed.level : null,
-          fade: parsed ? parsed.fade : null,
-          raw: rawStr,
-          bytes: Buffer.byteLength(rawStr, 'utf8'),
-          source: parsed ? parsed.type : null
-        };
-        ctx.LOAD_CACHE.set(key, record);
-      }
-      return record;
+      return recordFor(key, raw);
     })();
 
     ctx.LOAD_INFLIGHT.set(key, pending);
@@ -209,19 +209,11 @@ router.get('/dim', async (req, res) => {
     } finally {
       ctx.LOAD_INFLIGHT.delete(key);
     }
+    countRead('stream', out);
     return sendLoadResponse(res, format, out, { cached: false });
   } catch (err) {
     logLine(`Load status error: ${err?.message || String(err)}`);
-    const message = err?.message || 'Load status failed.';
-    if (err && typeof err.message === 'string') {
-      if (err.message.toLowerCase().includes('timeout')) {
-        return res.status(504).json({ ok: false, message });
-      }
-      if (err.message.toLowerCase().includes('awaiters limit')) {
-        return res.status(429).json({ ok: false, message });
-      }
-    }
-    return res.status(500).json({ ok: false, message });
+    return sendErr(res, err, 'Load status failed.');
   }
 });
 
